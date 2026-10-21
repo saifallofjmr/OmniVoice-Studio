@@ -10,6 +10,64 @@ from types import MethodType, SimpleNamespace
 import numpy as np
 
 
+def prepare_reference_audio(
+    reference: np.ndarray,
+    sample_rate: int,
+    max_duration: float,
+) -> np.ndarray:
+    reference = np.asarray(reference, dtype=np.float32).reshape(-1)
+    reference = np.nan_to_num(reference, copy=False)
+    if reference.size == 0:
+        raise ValueError("The live voice reference is empty.")
+
+    reference = reference - np.mean(reference, dtype=np.float64)
+    frame_length = max(1, int(round(sample_rate * 0.02)))
+    hop_length = max(1, int(round(sample_rate * 0.01)))
+    frame_starts = np.arange(
+        0,
+        max(1, reference.size - frame_length + 1),
+        hop_length,
+    )
+    frame_rms = np.asarray(
+        [
+            np.sqrt(
+                np.mean(
+                    np.square(reference[start : start + frame_length]),
+                    dtype=np.float64,
+                )
+            )
+            for start in frame_starts
+        ],
+        dtype=np.float32,
+    )
+    threshold = max(1e-4, float(frame_rms.max(initial=0.0)) * 0.04)
+    active_frames = np.flatnonzero(frame_rms >= threshold)
+    if active_frames.size:
+        padding = int(round(sample_rate * 0.05))
+        start = max(0, int(frame_starts[active_frames[0]]) - padding)
+        end = min(
+            reference.size,
+            int(frame_starts[active_frames[-1]]) + frame_length + padding,
+        )
+        reference = reference[start:end]
+
+    max_samples = max(1, int(round(sample_rate * max_duration)))
+    reference = reference[:max_samples]
+    rms = float(np.sqrt(np.mean(np.square(reference), dtype=np.float64)))
+    peak = float(np.max(np.abs(reference), initial=0.0))
+    if rms < 1e-5 or peak < 1e-4:
+        raise ValueError("The live voice reference contains no usable speech.")
+
+    gain = min(4.0, 0.1 / rms, 0.95 / peak)
+    reference = reference * gain
+    fade_samples = min(reference.size // 2, int(round(sample_rate * 0.005)))
+    if fade_samples:
+        fade = np.linspace(0.0, 1.0, fade_samples, dtype=np.float32)
+        reference[:fade_samples] *= fade
+        reference[-fade_samples:] *= fade[::-1]
+    return np.ascontiguousarray(reference, dtype=np.float32)
+
+
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed-vc-dir", required=True)
@@ -83,7 +141,11 @@ def precompute_reference_condition(engine) -> None:
         engine.config.reference_audio_path,
         sr=sample_rate,
     )
-    reference = reference[: int(sample_rate * engine.config.max_prompt_length)]
+    reference = prepare_reference_audio(
+        reference,
+        sample_rate,
+        engine.config.max_prompt_length,
+    )
     reference_tensor = torch.from_numpy(reference).to(engine.device)
     reference_16k = torchaudio.functional.resample(reference_tensor, sample_rate, 16000)
     semantic = semantic_fn(reference_16k.unsqueeze(0))
@@ -106,6 +168,14 @@ def precompute_reference_condition(engine) -> None:
     engine.reference_wav = reference
     engine.reference_wav_name = engine.config.reference_audio_path
     engine.prompt_len = engine.config.max_prompt_length
+    reference_rms = float(
+        np.sqrt(np.mean(np.square(reference), dtype=np.float64))
+    )
+    print(
+        f"REFERENCE duration_s={len(reference) / sample_rate:.2f} "
+        f"rms={reference_rms:.3f}",
+        flush=True,
+    )
 
 
 def select_stream_devices(input_name: str, output_name: str) -> None:

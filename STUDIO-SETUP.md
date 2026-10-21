@@ -45,9 +45,13 @@ launch-studio.cmd
 
 - **Fast:** lower latency, weaker similarity.
 - **Balanced:** moderate latency and identity.
+- **Enhanced fidelity:** stronger identity and streaming continuity while
+  retaining more gaming headroom than High fidelity.
 - **High fidelity:** strongest zero-shot similarity, highest latency.
 
 Use 6-15 seconds of clean, dry, authorized speech for the best result.
+Studio automatically removes silent reference edges and normalizes the
+conditioning level used by the live engine.
 
 ## Responsible use
 

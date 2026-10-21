@@ -19,7 +19,10 @@ from omnivoice.cli.capture_ui import (
     parse_hotkey,
     transcribe_audio,
 )
-from omnivoice.scripts.live_voice_worker import install_overload_recovery
+from omnivoice.scripts.live_voice_worker import (
+    install_overload_recovery,
+    prepare_reference_audio,
+)
 
 
 class _Speaker:
@@ -182,6 +185,7 @@ def test_live_voice_presets_trade_latency_for_similarity():
     fast = LIVE_VOICE_PRESETS["Fast"]
     balanced = LIVE_VOICE_PRESETS["Balanced"]
     efficient = LIVE_VOICE_PRESETS["Efficient fidelity"]
+    enhanced = LIVE_VOICE_PRESETS["Enhanced fidelity"]
     stable = LIVE_VOICE_PRESETS["CS2 stable"]
     high = LIVE_VOICE_PRESETS["High fidelity"]
 
@@ -200,6 +204,42 @@ def test_live_voice_presets_trade_latency_for_similarity():
     assert efficient["inference_cfg_rate"] == high["inference_cfg_rate"]
     assert efficient["diffusion_steps"] < high["diffusion_steps"]
     assert efficient["max_prompt_length"] < high["max_prompt_length"]
+    assert (
+        efficient["diffusion_steps"]
+        < enhanced["diffusion_steps"]
+        < high["diffusion_steps"]
+    )
+    assert (
+        efficient["max_prompt_length"]
+        < enhanced["max_prompt_length"]
+        < high["max_prompt_length"]
+    )
+
+
+def test_prepare_reference_audio_trims_silence_and_normalizes_level():
+    sample_rate = 1000
+    speech = np.full(1500, 0.02, dtype=np.float32)
+    speech[::2] *= -1
+    reference = np.concatenate(
+        (
+            np.zeros(500, dtype=np.float32),
+            speech,
+            np.zeros(500, dtype=np.float32),
+        )
+    )
+
+    prepared = prepare_reference_audio(reference, sample_rate, max_duration=1.0)
+
+    assert len(prepared) == 1000
+    prepared_rms = np.sqrt(np.mean(np.square(prepared)))
+    assert 0.07 <= prepared_rms <= 0.101
+    assert prepared[0] == pytest.approx(0.0)
+    assert prepared[-1] == pytest.approx(0.0)
+
+
+def test_prepare_reference_audio_rejects_silence():
+    with pytest.raises(ValueError, match="no usable speech"):
+        prepare_reference_audio(np.zeros(1000, dtype=np.float32), 1000, 1.0)
 
 
 def test_live_voice_watcher_detects_repeated_underruns():

@@ -384,6 +384,7 @@ Choose a live quality preset before starting:
 | Fast | Up to 3 s | CFG 0.0 / 4 steps | Lowest latency, weakest similarity |
 | Balanced | Up to 6 s | CFG 0.4 / 8 steps | Better identity with moderate delay |
 | Efficient fidelity | Up to 3 s | CFG 0.7 / 8 steps | Strong guidance with reduced sequence/step cost |
+| Enhanced fidelity | Up to 6 s | CFG 0.7 / 10 steps | Stronger live identity and smoother context without the full High-fidelity cost |
 | CS2 stable | Up to 6 s | CFG 0.0 / 8 steps | Default; resists foreground-game GPU contention |
 | CS2 survival | Up to 3 s | CFG 0.0 / 2 steps | Maximum continuity under severe load |
 | High fidelity | Up to 10 s | CFG 0.7 / 12 steps | Closest zero-shot match, highest delay |
@@ -391,7 +392,11 @@ Choose a live quality preset before starting:
 For the closest result, use **High fidelity** with 6-15 seconds of one clean,
 dry speaker at a healthy level. Remove music, game audio, reverberation,
 overlapping voices, long silences, and clipped peaks. Similar source and target
-pitch/register also improves perceived identity.
+pitch/register also improves perceived identity. Studio trims silent reference
+edges and safely normalizes the conditioning level before live conversion. The
+streaming joiner also rejects unreliable SOLA matches and uses
+correlation-aware crossfades to preserve consonants and avoid overlap volume
+dips.
 
 Studio watches Seed-VC's stream for repeated output underruns and reports the
 overload without changing the selected quality. The chosen preset persists

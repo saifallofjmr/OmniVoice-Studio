@@ -84,6 +84,14 @@ LIVE_VOICE_PRESETS = {
         "extra_time_ce": 2.5,
         "extra_time": 0.5,
     },
+    "Enhanced fidelity": {
+        "diffusion_steps": 10,
+        "inference_cfg_rate": 0.7,
+        "max_prompt_length": 6.0,
+        "block_time": 0.36,
+        "extra_time_ce": 3.5,
+        "extra_time": 0.8,
+    },
     "CS2 stable": {
         "diffusion_steps": 8,
         "inference_cfg_rate": 0.0,
