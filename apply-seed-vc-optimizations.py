@@ -19,10 +19,34 @@ def main() -> int:
         handle.write(PATCH)
         patch_path = Path(handle.name)
     try:
-        subprocess.run(
+        check = subprocess.run(
             ["git", "-C", str(seed_vc_dir), "apply", "--check", str(patch_path)],
-            check=True,
+            check=False,
+            capture_output=True,
+            text=True,
         )
+        if check.returncode != 0:
+            reverse_check = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(seed_vc_dir),
+                    "apply",
+                    "--reverse",
+                    "--check",
+                    str(patch_path),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if reverse_check.returncode == 0:
+                print("Seed-VC optimizations are already applied.")
+                return 0
+            raise RuntimeError(
+                "Seed-VC optimization patch does not match the pinned checkout:\n"
+                + check.stderr
+            )
         subprocess.run(
             [
                 "git",
