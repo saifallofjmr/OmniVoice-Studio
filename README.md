@@ -329,11 +329,14 @@ result remains editable before voice cloning. Use `--asr-model` or
 
 The default system-wide hotkeys are `Ctrl+Alt+F9` to start recording and
 `Ctrl+Alt+F10` to stop. `Ctrl+Alt+F11` sends the latest generated clip to the
-game microphone mixer. They remain active while another application or game
-has focus, use the Windows `RegisterHotKey` API without injecting input, and
-can be changed directly in the studio. Click **Detect** and press the desired
-key combination, or type it manually and click **Apply hotkeys**. Hotkey
-choices persist in the user's OmniVoice settings.
+game microphone route. If the normal microphone mixer is active, Studio queues
+the clip into that stream. If Live Clone owns the microphone, Studio opens a
+generated-audio-only stream to VoiceMeeter so the clip plays alongside the
+converted voice without exposing the raw microphone. The hotkeys remain active
+while another application or game has focus, use the Windows `RegisterHotKey`
+API without injecting input, and can be changed directly in the studio. Click
+**Detect** and press the desired key combination, or type it manually and click
+**Apply hotkeys**. Hotkey choices persist in the user's OmniVoice settings.
 
 ### Windows Game Microphone Mixer
 

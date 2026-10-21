@@ -267,6 +267,75 @@ def test_live_voice_watcher_detects_repeated_underruns():
     assert ("live_voice_overloaded",) in events
 
 
+def test_send_generated_clip_routes_without_raw_microphone_mixer(monkeypatch):
+    routed = {}
+
+    class Mixer:
+        running = False
+
+        @staticmethod
+        def play_generated_only(audio, device):
+            routed["audio"] = audio
+            routed["device"] = device
+
+    class Status:
+        value = ""
+
+        def set(self, value):
+            self.value = value
+
+    dummy = SimpleNamespace(
+        generated_audio=np.ones(100, dtype=np.float32),
+        mixer=Mixer(),
+        mixer_status_var=Status(),
+        _selected_virtual_output=lambda: SimpleNamespace(
+            name="Voicemeeter Input (VB-Audio Voicemeeter VAIO)",
+            index=37,
+        ),
+        _mixer_gain_changed=lambda: None,
+        _set_status=lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "omnivoice.cli.capture_ui.configure_voicemeeter_b1",
+        lambda: None,
+    )
+
+    OmniVoiceStudio._queue_generated_to_mixer(dummy)
+
+    assert routed["audio"] is dummy.generated_audio
+    assert routed["device"] == 37
+    assert "directly" in dummy.mixer_status_var.value
+
+
+def test_send_generated_clip_uses_running_mixer():
+    queued = {}
+
+    class Mixer:
+        running = True
+
+        @staticmethod
+        def queue_generated(audio):
+            queued["audio"] = audio
+
+    class Status:
+        value = ""
+
+        def set(self, value):
+            self.value = value
+
+    dummy = SimpleNamespace(
+        generated_audio=np.ones(100, dtype=np.float32),
+        mixer=Mixer(),
+        mixer_status_var=Status(),
+        _set_status=lambda *_args: None,
+    )
+
+    OmniVoiceStudio._queue_generated_to_mixer(dummy)
+
+    assert queued["audio"] is dummy.generated_audio
+    assert "queued" in dummy.mixer_status_var.value
+
+
 def test_overload_recovery_expands_delay_buffers():
     class FakeEngine:
         _ring_lock = threading.Lock()

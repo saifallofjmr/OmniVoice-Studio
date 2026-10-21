@@ -440,6 +440,43 @@ class RealtimeMicMixer:
         )
         self._audio_queue.put(resampled)
 
+    def play_generated_only(
+        self,
+        audio: np.ndarray,
+        virtual_output_device: int,
+    ) -> None:
+        resampled = _prepare_audio(
+            np.asarray(audio, dtype=np.float32)[:, np.newaxis],
+            REFERENCE_SAMPLE_RATE,
+            MIXER_SAMPLE_RATE,
+        )
+        with self._gain_lock:
+            generated_gain = self._generated_gain
+        routed = np.clip(resampled * generated_gain, -1.0, 1.0)
+        import sounddevice as sd
+
+        def worker():
+            try:
+                stereo = np.repeat(routed[:, np.newaxis], 2, axis=1)
+                with sd.OutputStream(
+                    device=virtual_output_device,
+                    samplerate=MIXER_SAMPLE_RATE,
+                    blocksize=MIXER_BLOCK_SIZE,
+                    dtype="float32",
+                    channels=2,
+                ) as stream:
+                    for start in range(0, len(stereo), MIXER_BLOCK_SIZE):
+                        stream.write(stereo[start : start + MIXER_BLOCK_SIZE])
+                self.event_queue.put(("clip_routed",))
+            except (OSError, RuntimeError, sd.PortAudioError) as exc:
+                self.event_queue.put(("clip_route_error", str(exc)))
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+            name="OmniVoiceGeneratedClipRoute",
+        ).start()
+
     def start(self, microphone_device: int, virtual_output_device: int) -> None:
         if self.running:
             raise RuntimeError("The game microphone mixer is already running.")
@@ -1939,12 +1976,22 @@ class OmniVoiceStudio:
             self._set_status("Generate cloned speech first.", "error")
             return
         try:
-            self.mixer.queue_generated(self.generated_audio)
-            self.mixer_status_var.set(
-                "Latest cloned speech queued for the CS2 microphone."
-            )
-            self._set_status("Queued cloned speech to the game microphone.", "success")
-        except RuntimeError as exc:
+            if self.mixer.running:
+                self.mixer.queue_generated(self.generated_audio)
+                message = "Latest cloned speech queued for the CS2 microphone."
+            else:
+                virtual_output = self._selected_virtual_output()
+                if virtual_output.name.casefold().startswith("voicemeeter input"):
+                    configure_voicemeeter_b1()
+                self._mixer_gain_changed()
+                self.mixer.play_generated_only(
+                    self.generated_audio,
+                    virtual_output.index,
+                )
+                message = "Sending cloned speech directly to the CS2 virtual feed."
+            self.mixer_status_var.set(message)
+            self._set_status(message, "success")
+        except (OSError, RuntimeError, ValueError) as exc:
             self._set_status(str(exc), "error")
 
     def _live_voice_running(self) -> bool:
@@ -2661,6 +2708,21 @@ class OmniVoiceStudio:
                         value=min(100.0, generated_level * 400)
                     )
                     self.output_meter.configure(value=min(100.0, output_level * 400))
+                elif kind == "clip_routed":
+                    self.mixer_status_var.set(
+                        "Latest cloned speech was sent to the CS2 virtual feed."
+                    )
+                    self._set_status(
+                        "Latest cloned speech finished playing into CS2.",
+                        "success",
+                    )
+                elif kind == "clip_route_error":
+                    _, detail = event
+                    self.mixer_status_var.set(f"Clip routing failed: {detail}")
+                    self._set_status(
+                        f"Could not send clip to CS2: {detail}",
+                        "error",
+                    )
                 elif kind == "mixer_error":
                     _, detail = event
                     self.mixer_status_var.set(f"Mixer error: {detail}")
@@ -2836,7 +2898,7 @@ class OmniVoiceStudio:
         self.send_to_mic_button.configure(
             state=(
                 "normal"
-                if mixer_running and self.generated_audio is not None
+                if self.generated_audio is not None and self.virtual_outputs
                 else "disabled"
             )
         )

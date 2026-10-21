@@ -41,6 +41,10 @@ launch-studio.cmd
    reference and click **Start live clone** for realtime conversion.
 3. In CS2, select **Voicemeeter Out 6 (VB-Audio Voicemeeter VAIO)**.
 
+**Send latest clip to CS2 mixer** works in either mode. During Live Clone, the
+clip uses a separate generated-audio-only VoiceMeeter stream, so the physical
+microphone is never passed through unconverted.
+
 ## Live clone quality
 
 - **Fast:** lower latency, weaker similarity.
