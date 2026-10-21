@@ -1,0 +1,79 @@
+# Design
+
+## Direction
+
+OmniVoice Studio is a compact native audio workbench. It uses familiar desktop
+controls and a waveform-first hierarchy rather than a web dashboard or a
+multi-step wizard. The user can see the entire capture-to-clone workflow in one
+window.
+
+## Visual System
+
+- **Surface:** Windows-native light utility chrome on `#f3f4f6`.
+- **Primary action:** restrained system blue, reserved for focus and generation.
+- **Recording:** red text communicates a live/destructive state without turning
+  the whole interface into an alert.
+- **Waveform:** deep slate canvas (`#111827`) with blue audio (`#60a5fa`),
+  visible selection fill, boundary handles, centerline, and time ruler.
+- **Status:** neutral slate, success green, and error red; every state is also
+  written as text.
+
+## Typography
+
+Segoe UI is used throughout to match Windows. The 20 px semibold title anchors
+the window; 10 px workhorse UI text carries controls and metadata. Measurements
+remain compact and readable without using monospace as decoration.
+
+## Layout
+
+The window follows the task order:
+
+1. Identity and purpose.
+2. System-output device selection.
+3. Persistent global record, stop, and play-AI hotkeys with visible bindings.
+4. Game microphone mixer with source/destination choices, gain, meters, and
+   explicit live state.
+5. Live AI clone controls that prepare the current reference, start or stop
+   zero-shot conversion, and expose measured delay in plain text.
+6. Record, stop, playback, open, and save controls.
+7. Large waveform editor with selection and reversible clipping actions.
+8. Side-by-side automatic Whisper transcript and text-clone test work areas.
+9. Persistent status line and generation progress.
+
+The waveform receives the largest share of space because audio selection is the
+precision task. Transcript and clone testing remain simultaneously visible so
+the user can correct words and immediately validate the reference.
+
+Whisper transcription is visibly automatic but never treated as infallible:
+the transcript remains a normal editable field, a manual transcribe action is
+available, and status text asks the user to review the result.
+
+## Interaction
+
+- Dragging across the waveform creates a visible time selection.
+- Playback uses the selection when present and the full clip otherwise.
+- Keep and delete operations are explicit and undoable.
+- Recording and model inference run outside the UI thread.
+- Global hotkeys remain active when the window is minimized or unfocused and
+  use no audible cue that could contaminate the loopback recording.
+- Mixer meters show live microphone, AI injection, and final output levels;
+  the virtual-route instruction stays visible beside mixer state.
+- Live conversion is a deliberate mutually exclusive mode: starting it stops
+  the normal mixer, releases other GPU models, and disables conflicting
+  capture/generation actions until conversion ends.
+- Quality is a named operational choice, not a cluster of model parameters:
+  Fast, Balanced, and High fidelity state the latency/similarity tradeoff while
+  the engine receives the underlying prompt, guidance, step, and context values.
+- Hotkey detection uses a focused, temporary capture dialog because assigning
+  a system-wide shortcut is a protected-focus task; the existing bindings are
+  paused only for the duration of capture and restored on cancellation.
+- Disabled states prevent conflicting capture, playback, editing, or generation.
+- Escape stops active recording or playback; standard open, save, and undo
+  shortcuts are supported.
+
+## Accessibility
+
+Controls use native focus behavior and keyboard traversal. Important state is
+never color-only: recording time, selection bounds, duration, success, and
+errors are stated in text. System dialogs handle file selection, and the layout
+remains usable at the declared minimum window size.

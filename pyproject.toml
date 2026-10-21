@@ -63,11 +63,18 @@ lora = [
     "peft>=0.20.0",       # LoRA fine-tuning support
 ]
 
+capture = [
+    "soundcard>=0.4.6",   # OS audio-device and speaker-loopback capture
+    "sounddevice>=0.5.6", # Low-latency full-duplex microphone mixing
+]
+
 [project.scripts]
 omnivoice-infer = "omnivoice.cli.infer:main"
 omnivoice-infer-batch = "omnivoice.cli.infer_batch:main"
 omnivoice-demo = "omnivoice.cli.demo:main"
 omnivoice-merge-lora = "omnivoice.cli.merge_lora:main"
+omnivoice-capture = "omnivoice.cli.capture:main"
+omnivoice-studio = "omnivoice.cli.capture_ui:main"
 
 [project.urls]
 Homepage = "https://github.com/k2-fsa/OmniVoice"

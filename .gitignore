@@ -18,6 +18,7 @@ build/
 /results/
 /data/
 /download
+/checkpoints/
 /local/
 /run*
 example.py

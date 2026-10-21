@@ -18,6 +18,11 @@
 
 OmniVoice is a state-of-the-art massively multilingual zero-shot text-to-speech (TTS) model supporting over 600 languages. Built on a novel diffusion language model-style architecture, it generates high-quality speech with superior inference speed, supporting voice cloning and voice design.
 
+> **OmniVoice Studio fork:** This repository also includes a native Windows
+> recording, editing, Whisper transcription, CS2 microphone-mixing, and
+> zero-shot live-conversion workflow. See [STUDIO-SETUP.md](STUDIO-SETUP.md),
+> or clone the repository and run `setup-and-launch.cmd`.
+
 **Contents**: [Key Features](#key-features) | [Installation](#installation) | [Quick Start](#quick-start) | [Python API](#python-api) | [Command-Line Tools](#command-line-tools) | [Training & Evaluation](#training--evaluation) | [Discussion](#discussion--communication) | [Citation](#citation)
 
 ## Key Features
@@ -281,6 +286,115 @@ Three CLI entry points are provided. The CLI tools support all features availabl
 | `omnivoice-demo` | Interactive Gradio web demo | [omnivoice/cli/demo.py](omnivoice/cli/demo.py) |
 | `omnivoice-infer` | Single-item inference | [omnivoice/cli/infer.py](omnivoice/cli/infer.py) |
 | `omnivoice-infer-batch` | Batch inference across multiple GPUs | [omnivoice/cli/infer_batch.py](omnivoice/cli/infer_batch.py) |
+| `omnivoice-capture` | Capture a reference clip from speaker loopback | [omnivoice/cli/capture.py](omnivoice/cli/capture.py) |
+| `omnivoice-studio` | Native reference editor and cloning workbench | [omnivoice/cli/capture_ui.py](omnivoice/cli/capture_ui.py) |
+
+### Capture a Voice-Cloning Reference
+
+Install the optional capture dependency:
+
+```bash
+pip install "omnivoice[capture]"
+```
+
+List speaker devices, then capture 3-10 seconds of clean target speech from
+the selected system output:
+
+```bash
+omnivoice-capture --list-devices
+omnivoice-capture \
+    --duration 8 \
+    --output reference.wav \
+    --transcript "Exact words spoken in the reference clip."
+```
+
+The command records speaker loopback, converts it to a 24 kHz mono WAV, and
+saves the optional transcript beside it as `reference.txt`. Play only the
+voice you want to clone during the recording window. Use the captured clip
+with `omnivoice-infer --ref_audio reference.wav --ref_text "Exact words..."`.
+The default speaker is used unless `--device` selects a listed index, ID, or
+unique device-name substring.
+
+For a native desktop workflow with record, stop, playback, waveform clipping,
+automatic Whisper transcription, transcript editing, and clone testing, launch:
+
+```bash
+omnivoice-studio --model local/OmniVoice --device cuda:0
+```
+
+The studio automatically transcribes new recordings and edited selections with
+`openai/whisper-large-v3-turbo`. The model downloads on first use and the
+result remains editable before voice cloning. Use `--asr-model` or
+`--asr-device` to choose another compatible Whisper checkpoint or device.
+
+The default system-wide hotkeys are `Ctrl+Alt+F9` to start recording and
+`Ctrl+Alt+F10` to stop. `Ctrl+Alt+F11` sends the latest generated clip to the
+game microphone mixer. They remain active while another application or game
+has focus, use the Windows `RegisterHotKey` API without injecting input, and
+can be changed directly in the studio. Click **Detect** and press the desired
+key combination, or type it manually and click **Apply hotkeys**. Hotkey
+choices persist in the user's OmniVoice settings.
+
+### Windows Game Microphone Mixer
+
+OmniVoice Studio can mix a live microphone with generated speech and route the
+result into a game through a virtual microphone:
+
+```text
+Physical microphone --\
+                       +--> VoiceMeeter Input --> VoiceMeeter Out 6 (B1) --> game
+Generated OmniVoice --/
+```
+
+Install the standard VoiceMeeter virtual audio driver, select the physical
+microphone and `Voicemeeter Input` in Studio, then click **Start mixer**. In
+CS2, select **Voicemeeter Out 6 (VB-Audio Voicemeeter VAIO)** as the
+microphone input. This numbered endpoint is the B1 bus exposed by the current
+VoiceMeeter driver. Studio configures the B1 route automatically, disables
+hardware monitoring to avoid feedback, and provides separate microphone/AI
+gain controls, meters, a limiter, a **Send latest clone** button, and a global
+play hotkey.
+
+On Windows, VoiceMeeter can be installed with:
+
+```powershell
+winget install --id VB-Audio.Voicemeeter --exact
+```
+
+### Zero-Shot Live AI Voice Conversion
+
+OmniVoice Studio can launch an isolated Seed-VC real-time engine so a recorded
+or opened reference becomes the voice used while speaking live:
+
+1. Record or open 1-30 seconds of an authorized voice.
+2. Trim the waveform to clean speech.
+3. Click **Start live clone** in the game microphone mixer.
+4. Set CS2 microphone input to **Voicemeeter Out 6** and speak normally.
+
+Studio writes the selected reference to Seed-VC, releases its Whisper/TTS GPU
+models, starts the headless converter with the selected physical microphone
+and `Voicemeeter Input`, and reports the measured conversion delay. Click
+**Stop live clone** before recording another reference or returning to normal
+microphone mixing.
+
+Choose a live quality preset before starting:
+
+| Preset | Reference used | Guidance / steps | Tradeoff |
+|---|---:|---:|---|
+| Fast | Up to 3 s | CFG 0.0 / 4 steps | Lowest latency, weakest similarity |
+| Balanced | Up to 6 s | CFG 0.4 / 8 steps | Better identity with moderate delay |
+| High fidelity | Up to 10 s | CFG 0.7 / 12 steps | Closest zero-shot match, highest delay |
+
+For the closest result, use **High fidelity** with 6-15 seconds of one clean,
+dry speaker at a healthy level. Remove music, game audio, reverberation,
+overlapping voices, long silences, and clipped peaks. Similar source and target
+pitch/register also improves perceived identity.
+
+The live engine is installed separately at `%USERPROFILE%\SeedVC` with Python
+3.10 and CUDA 12.8 so its model dependencies cannot conflict with OmniVoice.
+It uses the maintained `seed-vc-realtime` fork and the public
+`seed-uvit-tat-xlsr-tiny` zero-shot model. No training is required; use only
+voices you own or have permission to convert toward.
 
 ### Demo
 
