@@ -1,4 +1,5 @@
 import queue
+import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -18,6 +19,7 @@ from omnivoice.cli.capture_ui import (
     parse_hotkey,
     transcribe_audio,
 )
+from omnivoice.scripts.live_voice_worker import install_overload_recovery
 
 
 class _Speaker:
@@ -219,6 +221,57 @@ def test_live_voice_watcher_detects_repeated_underruns():
     while not dummy.events.empty():
         events.append(dummy.events.get_nowait())
     assert ("live_voice_overloaded",) in events
+
+
+def test_overload_recovery_passes_raw_mic_during_ai_gap():
+    class FakeEngine:
+        @staticmethod
+        def _audio_callback(_indata, outdata, _frames, _times, _status):
+            outdata[:] = 0
+
+        @staticmethod
+        def _pop_input():
+            return "block"
+
+        _ring_lock = threading.Lock()
+        _in_avail = 10
+        block_frame = 10
+        _in_r = 0
+        _in_ring = np.zeros(40, dtype=np.float32)
+
+    engine = FakeEngine()
+    install_overload_recovery(engine)
+    input_audio = np.full((10, 1), 0.1, dtype=np.float32)
+    output_audio = np.zeros((10, 2), dtype=np.float32)
+
+    engine._audio_callback(input_audio, output_audio, 10, None, None)
+
+    np.testing.assert_allclose(output_audio[:, 0], 0.1)
+    np.testing.assert_allclose(output_audio[:, 1], 0.1)
+
+
+def test_overload_recovery_drops_stale_input_blocks():
+    class FakeEngine:
+        @staticmethod
+        def _audio_callback(_indata, _outdata, _frames, _times, _status):
+            return None
+
+        @staticmethod
+        def _pop_input():
+            return "latest"
+
+        _ring_lock = threading.Lock()
+        _in_avail = 40
+        block_frame = 10
+        _in_r = 0
+        _in_ring = np.zeros(80, dtype=np.float32)
+
+    engine = FakeEngine()
+    install_overload_recovery(engine)
+
+    assert engine._pop_input() == "latest"
+    assert engine._in_avail == 10
+    assert engine._in_r == 30
 
 
 @pytest.mark.parametrize(

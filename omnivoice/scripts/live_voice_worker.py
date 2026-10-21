@@ -5,7 +5,9 @@ import ctypes
 import os
 import sys
 import time
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
+
+import numpy as np
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -22,6 +24,49 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument("--extra-time-ce", type=float, default=2.5)
     parser.add_argument("--extra-time", type=float, default=0.5)
     return parser
+
+
+def install_overload_recovery(engine) -> None:
+    original_callback = engine._audio_callback
+    original_pop_input = engine._pop_input
+    last_passthrough_report = 0.0
+    last_drop_report = 0.0
+
+    def resilient_callback(self, indata, outdata, frames, times, status):
+        nonlocal last_passthrough_report
+        original_callback(indata, outdata, frames, times, status)
+        input_mono = np.mean(indata, axis=1, dtype=np.float32)
+        input_rms = float(np.sqrt(np.mean(np.square(input_mono), dtype=np.float64)))
+        output_peak = float(np.max(np.abs(outdata), initial=0.0))
+        if input_rms >= 0.005 and output_peak < 1e-5:
+            outdata[:] = input_mono[:, None]
+            now = time.monotonic()
+            if now - last_passthrough_report >= 1.0:
+                last_passthrough_report = now
+                print("RECOVERY raw_passthrough", flush=True)
+
+    def pop_latest_input(self):
+        nonlocal last_drop_report
+        dropped_blocks = 0
+        with self._ring_lock:
+            complete_blocks = self._in_avail // self.block_frame
+            if complete_blocks > 1:
+                dropped_blocks = complete_blocks - 1
+                dropped_frames = dropped_blocks * self.block_frame
+                self._in_r = (self._in_r + dropped_frames) % len(self._in_ring)
+                self._in_avail -= dropped_frames
+        if dropped_blocks:
+            now = time.monotonic()
+            if now - last_drop_report >= 1.0:
+                last_drop_report = now
+                print(
+                    f"RECOVERY dropped_stale_blocks={dropped_blocks}",
+                    flush=True,
+                )
+        return original_pop_input()
+
+    engine._audio_callback = MethodType(resilient_callback, engine)
+    engine._pop_input = MethodType(pop_latest_input, engine)
 
 
 def main() -> int:
@@ -58,6 +103,7 @@ def main() -> int:
                 print(f"PERF infer_ms={infer_time * 1000:.1f}", flush=True)
 
         engine.on_perf_update = report_performance
+        install_overload_recovery(engine)
         engine.set_config(
             sg_hostapi="Windows WASAPI",
             sg_wasapi_exclusive=False,

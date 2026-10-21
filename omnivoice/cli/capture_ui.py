@@ -84,6 +84,14 @@ LIVE_VOICE_PRESETS = {
         "extra_time_ce": 2.5,
         "extra_time": 0.5,
     },
+    "CS2 survival": {
+        "diffusion_steps": 2,
+        "inference_cfg_rate": 0.0,
+        "max_prompt_length": 3.0,
+        "block_time": 0.4,
+        "extra_time_ce": 2.0,
+        "extra_time": 0.5,
+    },
     "High fidelity": {
         "diffusion_steps": 12,
         "inference_cfg_rate": 0.7,
@@ -2387,25 +2395,35 @@ class OmniVoiceStudio:
                     except ValueError:
                         self.live_voice_infer_ms = 0.0
                 elif kind == "live_voice_overloaded":
-                    if self.live_voice_active_preset != "CS2 stable":
-                        self.live_voice_quality_var.set("CS2 stable")
+                    if self.live_voice_active_preset not in {
+                        "CS2 stable",
+                        "CS2 survival",
+                    }:
+                        fallback = "CS2 stable"
+                    elif self.live_voice_active_preset == "CS2 stable":
+                        fallback = "CS2 survival"
+                    else:
+                        fallback = None
+
+                    if fallback is not None:
+                        self.live_voice_quality_var.set(fallback)
                         self.live_voice_status_var.set(
-                            "CS2 GPU load is starving High Fidelity; "
-                            "switching automatically to CS2 stable..."
+                            f"CS2 GPU load is starving "
+                            f"{self.live_voice_active_preset}; switching "
+                            f"automatically to {fallback}..."
                         )
                         self._set_status(
-                            "Live clone overload detected; applying the "
-                            "CS2 stable profile.",
+                            f"Live clone overload detected; applying {fallback}.",
                             "error",
                         )
                         self._stop_live_voice(restart=True)
                     else:
                         self.live_voice_status_var.set(
-                            "CS2 stable is still GPU-limited. Cap CS2 FPS "
-                            "until GPU usage stays below about 85%."
+                            "CS2 survival is dropping stale AI chunks and "
+                            "passing raw mic during gaps so output stays live."
                         )
                         self._set_status(
-                            "Live conversion is GPU-limited by CS2.",
+                            "Maximum overload recovery is active.",
                             "error",
                         )
                 elif kind == "live_voice_stopped":

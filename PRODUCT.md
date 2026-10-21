@@ -63,6 +63,9 @@ muted during capture.
 - A CS2-stable preset and underrun monitor automatically recover from
   foreground-game GPU starvation instead of leaving the virtual microphone
   silent.
+- Under extreme overload, CS2-survival mode discards stale conversion work and
+  substitutes raw microphone audio for missing AI blocks, prioritizing
+  continuity over perfect conversion.
 - The initial implementation is a local Python desktop app using native desktop
   controls, not a hosted web interface.
 

@@ -68,6 +68,9 @@ available, and status text asks the user to review the result.
 - Foreground-game overload is recoverable state: Studio explains the GPU
   conflict, stops the starved worker, and restarts the same reference with the
   stable profile rather than silently losing microphone output.
+- Survival recovery is honest about degradation: stale AI blocks are dropped
+  and raw microphone passthrough fills gaps, keeping the channel live while
+  status text explains that maximum overload recovery is active.
 - Hotkey detection uses a focused, temporary capture dialog because assigning
   a system-wide shortcut is a protected-focus task; the existing bindings are
   paused only for the duration of capture and restored on cancellation.
