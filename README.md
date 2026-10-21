@@ -417,6 +417,10 @@ data-dependent CUDA length/mask synchronizations, omits the all-true attention
 mask, and removes a redundant per-block CUDA synchronization. Silence output
 remains zero, speech context buffers are cleared before the next utterance, and
 the lightweight FSMN VAD is forced onto CPU so it does not compete with CS2.
+It also performs XLSR normalization directly on GPU and folds HiFT weight
+normalization once at startup. With Efficient Fidelity and the compiled
+estimator, the fully optimized conversion kernel measured roughly **62 ms
+median / 72 ms p95** on the reference RTX 5080 when CS2 was not GPU-bound.
 
 The live engine is installed separately at `%USERPROFILE%\SeedVC` with Python
 3.10 and CUDA 12.8 so its model dependencies cannot conflict with OmniVoice.
