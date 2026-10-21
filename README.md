@@ -407,11 +407,16 @@ diffusion estimator with Inductor while explicitly disabling CUDA graphs
 (CUDA-graph launch currently overflows on this Windows/Blackwell combination).
 If compilation fails, the worker logs the error and falls back to eager mode.
 
-Setup also applies `seed-vc-realtime.patch`, which maintains a CPU mirror of
-the rolling microphone context. This preserves Seed-VC's original Librosa
+Setup runs `apply-seed-vc-optimizations.py`, which maintains a CPU mirror of the
+rolling microphone context. This preserves Seed-VC's original Librosa
 resampling output while removing an unnecessary GPU-to-CPU synchronization on
 every block. On the reference machine, resampling p95 fell from roughly 89 ms
-to below 1 ms without changing the resampling algorithm.
+to below 1 ms without changing the resampling algorithm. The optimizer also
+skips the full conversion pipeline during confirmed silence, removes
+data-dependent CUDA length/mask synchronizations, omits the all-true attention
+mask, and removes a redundant per-block CUDA synchronization. Silence output
+remains zero, speech context buffers are cleared before the next utterance, and
+the lightweight FSMN VAD is forced onto CPU so it does not compete with CS2.
 
 The live engine is installed separately at `%USERPROFILE%\SeedVC` with Python
 3.10 and CUDA 12.8 so its model dependencies cannot conflict with OmniVoice.

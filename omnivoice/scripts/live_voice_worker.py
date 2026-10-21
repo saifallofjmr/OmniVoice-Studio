@@ -96,7 +96,7 @@ def precompute_reference_condition(engine) -> None:
     features = features - features.mean(dim=0, keepdim=True)
     engine.style2 = campplus_model(features.unsqueeze(0))
     engine.mel2 = to_mel(reference_tensor.unsqueeze(0))
-    target_lengths = torch.LongTensor([engine.mel2.size(2)]).to(engine.mel2.device)
+    target_lengths = engine.mel2.size(2)
     engine.prompt_condition = model.length_regulator(
         semantic,
         ylens=target_lengths,

@@ -105,10 +105,9 @@ if (-not (Test-Path (Join-Path $seedVcDirectory ".git"))) {
 }
 Invoke-Checked $git -C $seedVcDirectory fetch origin
 Invoke-Checked $git -C $seedVcDirectory checkout --force $seedVcCommit
-$seedVcPatch = Join-Path $PSScriptRoot "seed-vc-realtime.patch"
-if (Test-Path $seedVcPatch) {
-    Invoke-Checked $git -C $seedVcDirectory apply --check $seedVcPatch
-    Invoke-Checked $git -C $seedVcDirectory apply $seedVcPatch
+$seedVcOptimizer = Join-Path $PSScriptRoot "apply-seed-vc-optimizations.py"
+if (Test-Path $seedVcOptimizer) {
+    Invoke-Checked $python312 $seedVcOptimizer $seedVcDirectory
 }
 
 $seedPython = Join-Path $seedVcDirectory ".venv\Scripts\python.exe"
