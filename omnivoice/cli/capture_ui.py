@@ -577,10 +577,15 @@ def transcribe_audio(asr_pipe, audio: np.ndarray, sample_rate: int) -> str:
 
 
 class WaveformCanvas(tk.Canvas):
+    PLOT_LEFT = 48
+    PLOT_RIGHT = 10
+    PLOT_TOP = 28
+    PLOT_BOTTOM = 24
+
     def __init__(self, master, on_selection_changed, **kwargs):
         super().__init__(
             master,
-            background="#111827",
+            background="#0f172a",
             highlightthickness=1,
             highlightbackground="#334155",
             cursor="crosshair",
@@ -589,12 +594,24 @@ class WaveformCanvas(tk.Canvas):
         self.audio: np.ndarray | None = None
         self.sample_rate = REFERENCE_SAMPLE_RATE
         self.selection: tuple[float, float] | None = None
+        self.view_start = 0.0
+        self.view_end = 0.0
         self._anchor: float | None = None
+        self._pan_anchor_x: float | None = None
+        self._pan_anchor_start = 0.0
+        self._scroll_callback = None
         self._on_selection_changed = on_selection_changed
         self.bind("<Configure>", lambda _event: self.redraw())
         self.bind("<Button-1>", self._start_selection)
         self.bind("<B1-Motion>", self._drag_selection)
         self.bind("<ButtonRelease-1>", self._finish_selection)
+        self.bind("<Button-2>", self._start_pan)
+        self.bind("<B2-Motion>", self._drag_pan)
+        self.bind(
+            "<ButtonRelease-2>",
+            lambda _event: self.configure(cursor="crosshair"),
+        )
+        self.bind("<MouseWheel>", self._mouse_wheel)
 
     @property
     def duration(self) -> float:
@@ -602,12 +619,20 @@ class WaveformCanvas(tk.Canvas):
             return 0.0
         return len(self.audio) / self.sample_rate
 
+    @property
+    def visible_duration(self) -> float:
+        return max(0.0, self.view_end - self.view_start)
+
+    def set_scroll_callback(self, callback) -> None:
+        self._scroll_callback = callback
+        self._notify_scroll()
+
     def set_audio(self, audio: np.ndarray | None, sample_rate: int) -> None:
         self.audio = audio
         self.sample_rate = sample_rate
         self.selection = None
         self._anchor = None
-        self.redraw()
+        self.fit_view()
         self._on_selection_changed(self.selection)
 
     def clear_selection(self) -> None:
@@ -616,9 +641,77 @@ class WaveformCanvas(tk.Canvas):
         self.redraw()
         self._on_selection_changed(self.selection)
 
-    def _seconds_at_x(self, x: float) -> float:
+    def fit_view(self) -> None:
+        self.view_start = 0.0
+        self.view_end = self.duration
+        self.redraw()
+
+    def zoom_in(self) -> None:
+        self.zoom_by(1.6)
+
+    def zoom_out(self) -> None:
+        self.zoom_by(1 / 1.6)
+
+    def zoom_selection(self) -> None:
+        if self.selection is None:
+            return
+        start, end = sorted(self.selection)
+        if end - start < 0.02:
+            return
+        padding = (end - start) * 0.08
+        self.view_start = max(0.0, start - padding)
+        self.view_end = min(self.duration, end + padding)
+        self.redraw()
+
+    def zoom_by(self, factor: float, center: float | None = None) -> None:
+        if self.duration <= 0:
+            return
+        span = self.visible_duration or self.duration
+        center = center if center is not None else self.view_start + span / 2
+        new_span = max(0.05, min(self.duration, span / factor))
+        ratio = (center - self.view_start) / span if span else 0.5
+        start = center - ratio * new_span
+        start = max(0.0, min(self.duration - new_span, start))
+        self.view_start = start
+        self.view_end = start + new_span
+        self.redraw()
+
+    def scroll_to(self, *args) -> None:
+        if self.duration <= 0 or self.visible_duration >= self.duration:
+            return
+        span = self.visible_duration
+        if args[0] == "moveto":
+            start = float(args[1]) * self.duration
+        elif args[0] == "scroll":
+            amount = int(args[1])
+            unit = span * (0.1 if args[2] == "units" else 0.8)
+            start = self.view_start + amount * unit
+        else:
+            return
+        self.view_start = max(0.0, min(self.duration - span, start))
+        self.view_end = self.view_start + span
+        self.redraw()
+
+    def _plot_geometry(self) -> tuple[float, float, float, float]:
         width = max(1, self.winfo_width())
-        return max(0.0, min(self.duration, (x / width) * self.duration))
+        height = max(1, self.winfo_height())
+        return (
+            self.PLOT_LEFT,
+            self.PLOT_TOP,
+            max(self.PLOT_LEFT + 1, width - self.PLOT_RIGHT),
+            max(self.PLOT_TOP + 1, height - self.PLOT_BOTTOM),
+        )
+
+    def _seconds_at_x(self, x: float) -> float:
+        left, _top, right, _bottom = self._plot_geometry()
+        fraction = (x - left) / max(1.0, right - left)
+        fraction = max(0.0, min(1.0, fraction))
+        return self.view_start + fraction * self.visible_duration
+
+    def _x_at_seconds(self, seconds: float) -> float:
+        left, _top, right, _bottom = self._plot_geometry()
+        span = self.visible_duration or 1.0
+        return left + ((seconds - self.view_start) / span) * (right - left)
 
     def _start_selection(self, event) -> None:
         if self.audio is None or not len(self.audio):
@@ -646,66 +739,164 @@ class WaveformCanvas(tk.Canvas):
         self.redraw()
         self._on_selection_changed(self.selection)
 
+    def _start_pan(self, event) -> None:
+        self._pan_anchor_x = event.x
+        self._pan_anchor_start = self.view_start
+        self.configure(cursor="fleur")
+
+    def _drag_pan(self, event) -> None:
+        if self._pan_anchor_x is None or self.duration <= 0:
+            return
+        left, _top, right, _bottom = self._plot_geometry()
+        seconds_per_pixel = self.visible_duration / max(1.0, right - left)
+        delta = (self._pan_anchor_x - event.x) * seconds_per_pixel
+        span = self.visible_duration
+        self.view_start = max(
+            0.0,
+            min(self.duration - span, self._pan_anchor_start + delta),
+        )
+        self.view_end = self.view_start + span
+        self.redraw()
+
+    def _mouse_wheel(self, event) -> str:
+        center = self._seconds_at_x(event.x)
+        self.zoom_by(1.25 if event.delta > 0 else 0.8, center=center)
+        return "break"
+
+    def _notify_scroll(self) -> None:
+        if self._scroll_callback is None:
+            return
+        if self.duration <= 0:
+            self._scroll_callback(0.0, 1.0)
+            return
+        self._scroll_callback(
+            self.view_start / self.duration,
+            self.view_end / self.duration,
+        )
+
+    @staticmethod
+    def _format_time(seconds: float) -> str:
+        if seconds >= 60:
+            minutes = int(seconds // 60)
+            return f"{minutes}:{seconds - minutes * 60:04.1f}"
+        return f"{seconds:.1f}"
+
+    @staticmethod
+    def _tick_interval(span: float) -> float:
+        target = span / 8
+        for interval in (0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 60):
+            if interval >= target:
+                return interval
+        return 120
+
     def redraw(self) -> None:
         self.delete("all")
         width = max(1, self.winfo_width())
         height = max(1, self.winfo_height())
-        center = height / 2
+        left, top, right, bottom = self._plot_geometry()
+        center = (top + bottom) / 2
+        plot_height = bottom - top
+        display_peak = 1.0
+        if self.audio is not None and len(self.audio):
+            display_peak = max(
+                0.05,
+                min(1.0, float(np.max(np.abs(self.audio))) * 1.1),
+            )
 
-        self.create_line(0, center, width, center, fill="#334155")
+        self.create_rectangle(0, 0, width, self.PLOT_TOP, fill="#172033", outline="")
+        self.create_rectangle(0, top, left, bottom, fill="#172033", outline="")
+        self.create_line(left, center, right, center, fill="#475569")
+        for amplitude, label in (
+            (1.0, f"+{display_peak:.2f}"),
+            (0.0, "0.0"),
+            (-1.0, f"-{display_peak:.2f}"),
+        ):
+            y = center - amplitude * plot_height * 0.46
+            self.create_line(left, y, right, y, fill="#273449", dash=(2, 4))
+            self.create_text(
+                left - 6,
+                y,
+                anchor="e",
+                text=label,
+                fill="#94a3b8",
+                font=("Segoe UI", 8),
+            )
+
         if self.audio is None or not len(self.audio):
             self.create_text(
-                width / 2,
+                (left + right) / 2,
                 center,
                 text="Record or open a WAV file to begin",
                 fill="#94a3b8",
                 font=("Segoe UI", 11),
             )
+            self._notify_scroll()
             return
 
-        if self.selection is not None:
-            start, end = sorted(self.selection)
-            start_x = (start / self.duration) * width
-            end_x = (end / self.duration) * width
-            self.create_rectangle(
-                start_x,
-                0,
-                end_x,
-                height,
-                fill="#1d4ed8",
-                stipple="gray50",
-                outline="",
-            )
-            self.create_line(start_x, 0, start_x, height, fill="#93c5fd", width=2)
-            self.create_line(end_x, 0, end_x, height, fill="#93c5fd", width=2)
+        if self.view_end <= self.view_start:
+            self.view_start = 0.0
+            self.view_end = self.duration
 
-        samples_per_column = max(1, int(np.ceil(len(self.audio) / width)))
-        amplitude = max(1.0, float(np.max(np.abs(self.audio))))
-        scale = (height * 0.39) / amplitude
-        points = []
-        for x in range(width):
-            start = x * samples_per_column
-            if start >= len(self.audio):
-                break
-            chunk = self.audio[start : start + samples_per_column]
-            points.extend((x, center - float(np.max(chunk)) * scale))
-            points.extend((x, center - float(np.min(chunk)) * scale))
-        if points:
-            self.create_line(*points, fill="#60a5fa", width=1)
-
-        tick_count = max(2, min(10, round(self.duration)))
-        for tick in range(tick_count + 1):
-            seconds = (tick / tick_count) * self.duration
-            x = (tick / tick_count) * width
-            self.create_line(x, height - 14, x, height, fill="#475569")
+        interval = self._tick_interval(self.visible_duration)
+        first_tick = np.ceil(self.view_start / interval) * interval
+        tick = first_tick
+        while tick <= self.view_end + interval * 0.01:
+            x = self._x_at_seconds(tick)
+            self.create_line(x, top, x, bottom, fill="#263348")
+            self.create_line(x, self.PLOT_TOP - 6, x, self.PLOT_TOP, fill="#64748b")
             self.create_text(
-                x + 4,
-                height - 16,
-                anchor="sw",
-                text=f"{seconds:.1f}s",
-                fill="#94a3b8",
+                x + 3,
+                5,
+                anchor="nw",
+                text=self._format_time(tick),
+                fill="#cbd5e1",
                 font=("Segoe UI", 8),
             )
+            tick += interval
+
+        if self.selection is not None:
+            selection_start, selection_end = sorted(self.selection)
+            visible_start = max(self.view_start, selection_start)
+            visible_end = min(self.view_end, selection_end)
+            if visible_end > visible_start:
+                start_x = self._x_at_seconds(visible_start)
+                end_x = self._x_at_seconds(visible_end)
+                self.create_rectangle(
+                    start_x,
+                    top,
+                    end_x,
+                    bottom,
+                    fill="#1d4ed8",
+                    stipple="gray50",
+                    outline="",
+                )
+                self.create_line(start_x, top, start_x, bottom, fill="#bfdbfe", width=2)
+                self.create_line(end_x, top, end_x, bottom, fill="#bfdbfe", width=2)
+
+        start_sample = max(0, int(self.view_start * self.sample_rate))
+        end_sample = min(len(self.audio), int(self.view_end * self.sample_rate) + 1)
+        visible_audio = self.audio[start_sample:end_sample]
+        plot_width = max(1, int(right - left))
+        samples_per_column = max(1, int(np.ceil(len(visible_audio) / plot_width)))
+        scale = plot_height * 0.46 / display_peak
+        for column in range(plot_width):
+            sample_start = column * samples_per_column
+            if sample_start >= len(visible_audio):
+                break
+            chunk = visible_audio[sample_start : sample_start + samples_per_column]
+            minimum = float(np.min(chunk))
+            maximum = float(np.max(chunk))
+            x = left + column
+            self.create_line(
+                x,
+                center - maximum * scale,
+                x,
+                center - minimum * scale,
+                fill="#4ea1ff",
+            )
+
+        self.create_rectangle(left, top, right, bottom, outline="#475569")
+        self._notify_scroll()
 
 
 class OmniVoiceStudio:
@@ -866,13 +1057,17 @@ class OmniVoiceStudio:
             style="Route.TLabel",
         ).grid(row=1, column=0, sticky="e")
 
-        workspace = ttk.Panedwindow(outer, orient="horizontal")
+        workspace = ttk.Frame(outer)
         workspace.grid(row=1, column=0, sticky="nsew")
+        workspace.columnconfigure(0, weight=5, minsize=470)
+        workspace.columnconfigure(1, weight=4, minsize=430)
+        workspace.columnconfigure(2, weight=3, minsize=340)
+        workspace.rowconfigure(0, weight=1)
 
         reference_column = ttk.Frame(workspace, padding=(0, 0, 8, 0))
         reference_column.columnconfigure(0, weight=1)
         reference_column.rowconfigure(1, weight=1)
-        workspace.add(reference_column, weight=5)
+        reference_column.grid(row=0, column=0, sticky="nsew")
 
         capture_panel = ttk.Labelframe(
             reference_column,
@@ -922,15 +1117,43 @@ class OmniVoiceStudio:
         )
         waveform_panel.grid(row=1, column=0, sticky="nsew")
         waveform_panel.columnconfigure(0, weight=1)
-        waveform_panel.rowconfigure(0, weight=1)
+        waveform_panel.rowconfigure(1, weight=1)
+        waveform_toolbar = ttk.Frame(waveform_panel)
+        waveform_toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 7))
+        ttk.Label(
+            waveform_toolbar,
+            text="Mono  |  24 kHz",
+            style="Subtitle.TLabel",
+        ).pack(side="left")
         self.waveform = WaveformCanvas(
             waveform_panel,
             on_selection_changed=self._selection_changed,
             height=500,
         )
-        self.waveform.grid(row=0, column=0, sticky="nsew")
+        self.waveform.grid(row=1, column=0, sticky="nsew")
+        ttk.Button(waveform_toolbar, text="Fit", command=self.waveform.fit_view).pack(
+            side="right"
+        )
+        ttk.Button(
+            waveform_toolbar,
+            text="Selection",
+            command=self.waveform.zoom_selection,
+        ).pack(side="right", padx=(0, 6))
+        ttk.Button(
+            waveform_toolbar, text="-", width=3, command=self.waveform.zoom_out
+        ).pack(side="right", padx=(0, 6))
+        ttk.Button(
+            waveform_toolbar, text="+", width=3, command=self.waveform.zoom_in
+        ).pack(side="right", padx=(0, 6))
+        waveform_scrollbar = ttk.Scrollbar(
+            waveform_panel,
+            orient="horizontal",
+            command=self.waveform.scroll_to,
+        )
+        waveform_scrollbar.grid(row=2, column=0, sticky="ew", pady=(5, 0))
+        self.waveform.set_scroll_callback(waveform_scrollbar.set)
         edit_row = ttk.Frame(waveform_panel)
-        edit_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        edit_row.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         self.selection_var = tk.StringVar(value="No selection")
         ttk.Label(edit_row, textvariable=self.selection_var).pack(side="left")
         self.clear_selection_button = ttk.Button(
@@ -952,7 +1175,7 @@ class OmniVoiceStudio:
         clone_column.columnconfigure(0, weight=1)
         clone_column.rowconfigure(0, weight=1)
         clone_column.rowconfigure(1, weight=1)
-        workspace.add(clone_column, weight=4)
+        clone_column.grid(row=0, column=1, sticky="nsew")
 
         transcript_panel = ttk.Labelframe(
             clone_column,
@@ -1067,7 +1290,7 @@ class OmniVoiceStudio:
         live_column = ttk.Frame(workspace, padding=(8, 0, 0, 0))
         live_column.columnconfigure(0, weight=1)
         live_column.rowconfigure(1, weight=1)
-        workspace.add(live_column, weight=4)
+        live_column.grid(row=0, column=2, sticky="nsew")
 
         live_panel = ttk.Labelframe(
             live_column,
