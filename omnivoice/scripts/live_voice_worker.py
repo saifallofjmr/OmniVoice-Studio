@@ -23,6 +23,11 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument("--block-time", type=float, default=0.2)
     parser.add_argument("--extra-time-ce", type=float, default=2.5)
     parser.add_argument("--extra-time", type=float, default=0.5)
+    parser.add_argument(
+        "--compile-estimator",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     return parser
 
 
@@ -103,6 +108,79 @@ def precompute_reference_condition(engine) -> None:
     engine.prompt_len = engine.config.max_prompt_length
 
 
+def select_stream_devices(input_name: str, output_name: str) -> None:
+    import sounddevice as sd
+
+    try:
+        host_apis = sd.query_hostapis()
+        wasapi_index = next(
+            index
+            for index, host_api in enumerate(host_apis)
+            if host_api["name"] == "Windows WASAPI"
+        )
+        devices = sd.query_devices()
+        input_index = next(
+            index
+            for index, device in enumerate(devices)
+            if device["hostapi"] == wasapi_index
+            and device["name"] == input_name
+            and device["max_input_channels"] > 0
+        )
+        output_index = next(
+            index
+            for index, device in enumerate(devices)
+            if device["hostapi"] == wasapi_index
+            and device["name"] == output_name
+            and device["max_output_channels"] > 0
+        )
+    except (StopIteration, sd.PortAudioError) as exc:
+        raise ValueError(f"Could not resolve WASAPI devices: {exc}") from exc
+    sd.default.device = (input_index, output_index)
+
+
+def warmup_engine(engine, compile_estimator: bool) -> None:
+    import torch
+
+    model = engine.model_set[0]
+    original_estimator = model.cfm.estimator
+    compiled = False
+    if compile_estimator:
+        try:
+            import torch._inductor.config as inductor_config
+
+            inductor_config.triton.cudagraphs = False
+            model.cfm.estimator = torch.compile(
+                original_estimator,
+                fullgraph=False,
+                dynamic=False,
+                options={"triton.cudagraphs": False},
+            )
+            compiled = True
+        except (ImportError, OSError, RuntimeError) as exc:
+            print(f"COMPILE unavailable: {exc}", flush=True)
+
+    engine._prepare_buffers()
+    precompute_reference_condition(engine)
+    dummy_input = torch.zeros_like(engine.input_wav_res)
+    try:
+        engine._custom_infer(dummy_input)
+        if engine.device.type == "cuda":
+            torch.cuda.synchronize()
+        print(
+            f"WARMUP estimator={'compiled' if compiled else 'eager'}",
+            flush=True,
+        )
+    except (OverflowError, RuntimeError) as exc:
+        if not compiled:
+            raise
+        print(f"COMPILE failed, reverting to eager: {exc}", flush=True)
+        model.cfm.estimator = original_estimator
+        engine._custom_infer(dummy_input)
+        if engine.device.type == "cuda":
+            torch.cuda.synchronize()
+        print("WARMUP estimator=eager", flush=True)
+
+
 def main() -> int:
     args = get_parser().parse_args()
     seed_vc_dir = os.path.abspath(args.seed_vc_dir)
@@ -159,7 +237,8 @@ def main() -> int:
             extra_time=args.extra_time,
             extra_time_right=0.02,
         )
-        precompute_reference_condition(engine)
+        select_stream_devices(args.input_device, args.output_device)
+        warmup_engine(engine, args.compile_estimator)
         engine.start_stream()
         print(f"READY delay_ms={engine.delay_time * 1000:.1f}", flush=True)
         sys.stdin.readline()

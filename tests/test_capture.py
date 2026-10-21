@@ -181,6 +181,7 @@ def test_virtual_and_physical_device_detection():
 def test_live_voice_presets_trade_latency_for_similarity():
     fast = LIVE_VOICE_PRESETS["Fast"]
     balanced = LIVE_VOICE_PRESETS["Balanced"]
+    efficient = LIVE_VOICE_PRESETS["Efficient fidelity"]
     stable = LIVE_VOICE_PRESETS["CS2 stable"]
     high = LIVE_VOICE_PRESETS["High fidelity"]
 
@@ -196,6 +197,9 @@ def test_live_voice_presets_trade_latency_for_similarity():
     assert stable["diffusion_steps"] == balanced["diffusion_steps"]
     assert stable["inference_cfg_rate"] == 0.0
     assert stable["block_time"] < high["block_time"]
+    assert efficient["inference_cfg_rate"] == high["inference_cfg_rate"]
+    assert efficient["diffusion_steps"] < high["diffusion_steps"]
+    assert efficient["max_prompt_length"] < high["max_prompt_length"]
 
 
 def test_live_voice_watcher_detects_repeated_underruns():

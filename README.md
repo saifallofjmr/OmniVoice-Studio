@@ -383,6 +383,7 @@ Choose a live quality preset before starting:
 |---|---:|---:|---|
 | Fast | Up to 3 s | CFG 0.0 / 4 steps | Lowest latency, weakest similarity |
 | Balanced | Up to 6 s | CFG 0.4 / 8 steps | Better identity with moderate delay |
+| Efficient fidelity | Up to 3 s | CFG 0.7 / 8 steps | Strong guidance with reduced sequence/step cost |
 | CS2 stable | Up to 6 s | CFG 0.0 / 8 steps | Default; resists foreground-game GPU contention |
 | CS2 survival | Up to 3 s | CFG 0.0 / 2 steps | Maximum continuity under severe load |
 | High fidelity | Up to 10 s | CFG 0.7 / 12 steps | Closest zero-shot match, highest delay |
@@ -399,6 +400,12 @@ is available as a manual continuity-first option: it keeps a larger
 converted-audio buffer and preserves delayed AI blocks instead of discarding
 them. Under severe load the converted voice can pause and arrive later, but
 Studio never exposes the raw microphone.
+
+On Windows with PyTorch 2.8/CUDA 12.8, setup also installs
+`triton-windows==3.4.0.post20`. The live worker compiles the fixed-shape
+diffusion estimator with Inductor while explicitly disabling CUDA graphs
+(CUDA-graph launch currently overflows on this Windows/Blackwell combination).
+If compilation fails, the worker logs the error and falls back to eager mode.
 
 The live engine is installed separately at `%USERPROFILE%\SeedVC` with Python
 3.10 and CUDA 12.8 so its model dependencies cannot conflict with OmniVoice.

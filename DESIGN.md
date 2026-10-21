@@ -55,9 +55,9 @@ available, and status text asks the user to review the result.
   the normal mixer, releases other GPU models, and disables conflicting
   capture/generation actions until conversion ends.
 - Quality is a named operational choice, not a cluster of model parameters:
-  Fast, Balanced, CS2 stable, and High fidelity state the latency/similarity
-  tradeoff while the engine receives the underlying prompt, guidance, step,
-  and context values.
+  Fast, Balanced, Efficient fidelity, CS2 stable, CS2 survival, and High
+  fidelity state the latency/similarity tradeoff while the engine receives the
+  underlying prompt, guidance, step, and context values.
 - Foreground-game overload is visible state: Studio explains the GPU conflict
   without changing quality, stopping the worker, or overriding the user's
   choice.

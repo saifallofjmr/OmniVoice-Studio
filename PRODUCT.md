@@ -60,6 +60,8 @@ muted during capture.
 - Live conversion exposes fast, balanced, and high-fidelity presets that trade
   latency for prompt duration, similarity guidance, diffusion steps, and
   context.
+- An efficient-fidelity preset keeps strong CFG guidance while shortening the
+  prompt and reducing diffusion work for gaming under shared GPU load.
 - An underrun monitor reports foreground-game GPU starvation without changing
   the user's selected quality preset.
 - Under extreme overload, CS2-survival mode preserves delayed converted audio
