@@ -750,11 +750,35 @@ class OmniVoiceStudio:
         self._build_ui()
         self._refresh_devices()
         self._apply_hotkeys(save=False)
+        self._restore_live_reference()
         if self.hotkey_config_warning:
             self._set_status(self.hotkey_config_warning, "error")
         self._update_controls()
         self.root.after(50, self._poll_events)
         self.root.protocol("WM_DELETE_WINDOW", self._close)
+
+    def _restore_live_reference(self) -> None:
+        if not SEED_VC_REFERENCE.exists():
+            return
+        try:
+            data, sample_rate = sf.read(
+                SEED_VC_REFERENCE,
+                dtype="float32",
+                always_2d=True,
+            )
+            audio = _prepare_audio(data, sample_rate, REFERENCE_SAMPLE_RATE)
+            _validate_audio(audio)
+            self._suppress_auto_transcription = True
+            try:
+                self._set_audio(audio)
+            finally:
+                self._suppress_auto_transcription = False
+            self._set_status("Restored the previous live-clone reference.", "success")
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._set_status(
+                f"Could not restore the previous live reference: {exc}",
+                "error",
+            )
 
     def _configure_window(self) -> None:
         self.root.title("OmniVoice Studio")
