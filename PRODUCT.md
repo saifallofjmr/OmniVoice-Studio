@@ -60,9 +60,8 @@ muted during capture.
 - Live conversion exposes fast, balanced, and high-fidelity presets that trade
   latency for prompt duration, similarity guidance, diffusion steps, and
   context.
-- A CS2-stable preset and underrun monitor automatically recover from
-  foreground-game GPU starvation instead of leaving the virtual microphone
-  silent.
+- An underrun monitor reports foreground-game GPU starvation without changing
+  the user's selected quality preset.
 - Under extreme overload, CS2-survival mode preserves delayed converted audio
   in an expanded buffer. Output may pause or gain latency, but the unmodified
   microphone is never exposed.

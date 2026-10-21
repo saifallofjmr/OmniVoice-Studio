@@ -744,12 +744,12 @@ class OmniVoiceStudio:
         self.mixer = RealtimeMicMixer(self.events)
         self.live_voice_process: subprocess.Popen | None = None
         self.live_voice_active_preset = ""
-        self.live_voice_restart_pending = False
         self.live_voice_infer_ms = 0.0
         (
             self.initial_record_hotkey,
             self.initial_stop_hotkey,
             self.initial_play_hotkey,
+            self.initial_live_quality,
             self.hotkey_config_warning,
         ) = self._load_hotkey_settings()
         self.hotkey_specs: dict[str, HotkeySpec] = {}
@@ -790,8 +790,8 @@ class OmniVoiceStudio:
 
     def _configure_window(self) -> None:
         self.root.title("OmniVoice Studio")
-        self.root.geometry("1080x920")
-        self.root.minsize(940, 800)
+        self.root.geometry("1420x900")
+        self.root.minsize(1180, 760)
         self.root.configure(background="#f3f4f6")
 
         style = ttk.Style(self.root)
@@ -814,249 +814,84 @@ class OmniVoiceStudio:
             foreground="#1d4ed8",
             font=("Segoe UI Semibold", 10),
         )
+        style.configure(
+            "Nav.TButton",
+            font=("Segoe UI Semibold", 10),
+            padding=(18, 9),
+        )
+        style.configure(
+            "NavActive.TButton",
+            foreground="#1d4ed8",
+            font=("Segoe UI Semibold", 10),
+            padding=(18, 9),
+        )
+        style.configure(
+            "Route.TLabel",
+            foreground="#1d4ed8",
+            font=("Segoe UI Semibold", 10),
+        )
+        style.configure(
+            "Section.TLabelframe.Label",
+            font=("Segoe UI Semibold", 11),
+        )
         style.configure("Status.TLabel", foreground="#475569")
         style.configure("Error.Status.TLabel", foreground="#b91c1c")
         style.configure("Success.Status.TLabel", foreground="#166534")
 
     def _build_ui(self) -> None:
-        outer = ttk.Frame(self.root, padding=(24, 20, 24, 18))
+        outer = ttk.Frame(self.root, padding=(20, 16, 20, 12))
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=1)
-        outer.rowconfigure(5, weight=1)
+        outer.rowconfigure(1, weight=1)
 
-        heading = ttk.Frame(outer)
-        heading.grid(row=0, column=0, sticky="ew")
-        heading.columnconfigure(0, weight=1)
-        ttk.Label(heading, text="OmniVoice Studio", style="Title.TLabel").grid(
+        header = ttk.Frame(outer)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="OmniVoice Studio", style="Title.TLabel").grid(
             row=0, column=0, sticky="w"
         )
         ttk.Label(
-            heading,
-            text="Capture a clean voice, shape the reference, then test the clone.",
+            header,
+            text="Reference workspace, text clone, and live CS2 voice in one view.",
             style="Subtitle.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(2, 0))
-
-        device_row = ttk.Frame(outer)
-        device_row.grid(row=1, column=0, sticky="ew", pady=(18, 10))
-        device_row.columnconfigure(1, weight=1)
-        ttk.Label(device_row, text="System output").grid(
-            row=0, column=0, sticky="w", padx=(0, 10)
+        route_box = ttk.Frame(header)
+        route_box.grid(row=0, column=1, rowspan=2, sticky="e")
+        ttk.Label(route_box, text="CS2 microphone", style="Subtitle.TLabel").grid(
+            row=0, column=0, sticky="e"
         )
-        self.device_combo = ttk.Combobox(device_row, state="readonly")
+        ttk.Label(
+            route_box,
+            text="Voicemeeter Out 6 (B1)",
+            style="Route.TLabel",
+        ).grid(row=1, column=0, sticky="e")
+
+        workspace = ttk.Panedwindow(outer, orient="horizontal")
+        workspace.grid(row=1, column=0, sticky="nsew")
+
+        reference_column = ttk.Frame(workspace, padding=(0, 0, 8, 0))
+        reference_column.columnconfigure(0, weight=1)
+        reference_column.rowconfigure(1, weight=1)
+        workspace.add(reference_column, weight=5)
+
+        capture_panel = ttk.Labelframe(
+            reference_column,
+            text="1. Capture and shape the reference",
+            style="Section.TLabelframe",
+            padding=10,
+        )
+        capture_panel.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        capture_panel.columnconfigure(1, weight=1)
+        ttk.Label(capture_panel, text="System output").grid(
+            row=0, column=0, sticky="w", padx=(0, 8)
+        )
+        self.device_combo = ttk.Combobox(capture_panel, state="readonly")
         self.device_combo.grid(row=0, column=1, sticky="ew")
-        ttk.Button(device_row, text="Refresh", command=self._refresh_devices).grid(
-            row=0, column=2, padx=(8, 0)
+        ttk.Button(capture_panel, text="Refresh", command=self._refresh_devices).grid(
+            row=0, column=2, padx=(6, 0)
         )
-
-        hotkey_row = ttk.Labelframe(
-            outer,
-            text="Global hotkeys - active while CS2 is focused",
-            padding=(10, 7),
-        )
-        hotkey_row.grid(row=2, column=0, sticky="ew", pady=(0, 10))
-        hotkey_row.columnconfigure(1, weight=1)
-        hotkey_row.columnconfigure(4, weight=1)
-        ttk.Label(hotkey_row, text="Record").grid(
-            row=0, column=0, sticky="w", padx=(0, 8)
-        )
-        self.record_hotkey_var = tk.StringVar(value=self.initial_record_hotkey)
-        self.record_hotkey_entry = ttk.Entry(
-            hotkey_row, textvariable=self.record_hotkey_var
-        )
-        self.record_hotkey_entry.grid(row=0, column=1, sticky="ew")
-        self.detect_record_hotkey_button = ttk.Button(
-            hotkey_row,
-            text="Detect",
-            command=lambda: self._detect_hotkey("record"),
-        )
-        self.detect_record_hotkey_button.grid(row=0, column=2, padx=(6, 0))
-        ttk.Label(hotkey_row, text="Stop").grid(
-            row=0, column=3, sticky="w", padx=(14, 8)
-        )
-        self.stop_hotkey_var = tk.StringVar(value=self.initial_stop_hotkey)
-        self.stop_hotkey_entry = ttk.Entry(
-            hotkey_row, textvariable=self.stop_hotkey_var
-        )
-        self.stop_hotkey_entry.grid(row=0, column=4, sticky="ew")
-        self.detect_stop_hotkey_button = ttk.Button(
-            hotkey_row,
-            text="Detect",
-            command=lambda: self._detect_hotkey("stop"),
-        )
-        self.detect_stop_hotkey_button.grid(row=0, column=5, padx=(6, 0))
-        self.apply_hotkeys_button = ttk.Button(
-            hotkey_row,
-            text="Apply hotkeys",
-            command=self._apply_hotkeys,
-        )
-        self.apply_hotkeys_button.grid(row=1, column=6, padx=(10, 0), pady=(6, 0))
-        ttk.Label(hotkey_row, text="Play AI").grid(
-            row=1, column=0, sticky="w", padx=(0, 8), pady=(6, 0)
-        )
-        self.play_hotkey_var = tk.StringVar(value=self.initial_play_hotkey)
-        self.play_hotkey_entry = ttk.Entry(
-            hotkey_row, textvariable=self.play_hotkey_var
-        )
-        self.play_hotkey_entry.grid(
-            row=1, column=1, columnspan=4, sticky="ew", pady=(6, 0)
-        )
-        self.detect_play_hotkey_button = ttk.Button(
-            hotkey_row,
-            text="Detect",
-            command=lambda: self._detect_hotkey("play"),
-        )
-        self.detect_play_hotkey_button.grid(row=1, column=5, padx=(6, 0), pady=(6, 0))
-        self.hotkey_status_var = tk.StringVar(value="Not registered")
-        ttk.Label(
-            hotkey_row,
-            textvariable=self.hotkey_status_var,
-            style="Subtitle.TLabel",
-        ).grid(row=2, column=0, columnspan=7, sticky="w", pady=(5, 0))
-
-        mixer_frame = ttk.Labelframe(
-            outer,
-            text="Game microphone mixer",
-            padding=(10, 8),
-        )
-        mixer_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
-        mixer_frame.columnconfigure(1, weight=1)
-        mixer_frame.columnconfigure(3, weight=1)
-        ttk.Label(mixer_frame, text="Live microphone").grid(
-            row=0, column=0, sticky="w", padx=(0, 8)
-        )
-        self.mixer_mic_combo = ttk.Combobox(mixer_frame, state="readonly")
-        self.mixer_mic_combo.grid(row=0, column=1, sticky="ew")
-        ttk.Label(mixer_frame, text="Virtual feed").grid(
-            row=0, column=2, sticky="w", padx=(14, 8)
-        )
-        self.virtual_output_combo = ttk.Combobox(mixer_frame, state="readonly")
-        self.virtual_output_combo.grid(row=0, column=3, sticky="ew")
-
-        self.microphone_gain_var = tk.DoubleVar(value=1.0)
-        self.generated_gain_var = tk.DoubleVar(value=1.0)
-        self.microphone_gain_label = tk.StringVar(value="Mic 100%")
-        self.generated_gain_label = tk.StringVar(value="AI 100%")
-        ttk.Label(mixer_frame, textvariable=self.microphone_gain_label).grid(
-            row=1, column=0, sticky="w", pady=(8, 0)
-        )
-        self.microphone_gain_scale = ttk.Scale(
-            mixer_frame,
-            from_=0.0,
-            to=2.0,
-            variable=self.microphone_gain_var,
-            command=lambda _value: self._mixer_gain_changed(),
-        )
-        self.microphone_gain_scale.grid(row=1, column=1, sticky="ew", pady=(8, 0))
-        ttk.Label(mixer_frame, textvariable=self.generated_gain_label).grid(
-            row=1, column=2, sticky="w", padx=(14, 8), pady=(8, 0)
-        )
-        self.generated_gain_scale = ttk.Scale(
-            mixer_frame,
-            from_=0.0,
-            to=2.0,
-            variable=self.generated_gain_var,
-            command=lambda _value: self._mixer_gain_changed(),
-        )
-        self.generated_gain_scale.grid(row=1, column=3, sticky="ew", pady=(8, 0))
-
-        meter_row = ttk.Frame(mixer_frame)
-        meter_row.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(8, 0))
-        meter_row.columnconfigure(1, weight=1)
-        meter_row.columnconfigure(3, weight=1)
-        ttk.Label(meter_row, text="Mic").grid(row=0, column=0, padx=(0, 6))
-        self.microphone_meter = ttk.Progressbar(
-            meter_row, maximum=100, mode="determinate"
-        )
-        self.microphone_meter.grid(row=0, column=1, sticky="ew")
-        ttk.Label(meter_row, text="AI").grid(row=0, column=2, padx=(12, 6))
-        self.generated_meter = ttk.Progressbar(
-            meter_row, maximum=100, mode="determinate"
-        )
-        self.generated_meter.grid(row=0, column=3, sticky="ew")
-        ttk.Label(meter_row, text="Out").grid(row=0, column=4, padx=(12, 6))
-        self.output_meter = ttk.Progressbar(
-            meter_row, maximum=100, mode="determinate", length=120
-        )
-        self.output_meter.grid(row=0, column=5)
-        self.start_mixer_button = ttk.Button(
-            meter_row, text="Start mixer", command=self._start_mixer
-        )
-        self.start_mixer_button.grid(row=0, column=6, padx=(14, 0))
-        self.stop_mixer_button = ttk.Button(
-            meter_row, text="Stop mixer", command=self._stop_mixer
-        )
-        self.stop_mixer_button.grid(row=0, column=7, padx=(6, 0))
-        self.send_to_mic_button = ttk.Button(
-            meter_row,
-            text="Send latest clone",
-            command=self._queue_generated_to_mixer,
-        )
-        self.send_to_mic_button.grid(row=0, column=8, padx=(6, 0))
-        self.mixer_status_var = tk.StringVar(
-            value="Set CS2 microphone input to Voicemeeter Out 6 (B1)."
-        )
-        ttk.Label(
-            mixer_frame,
-            textvariable=self.mixer_status_var,
-            style="Subtitle.TLabel",
-        ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(6, 0))
-        live_voice_row = ttk.Frame(mixer_frame)
-        live_voice_row.grid(row=4, column=0, columnspan=4, sticky="ew", pady=(8, 0))
-        live_voice_row.columnconfigure(1, weight=1)
-        ttk.Label(
-            live_voice_row,
-            text="Live AI clone",
-            font=("Segoe UI Semibold", 10),
-        ).grid(row=0, column=0, sticky="w", padx=(0, 10))
-        self.live_voice_status_var = tk.StringVar(
-            value="Record or open a voice reference, then start live conversion."
-        )
-        ttk.Label(
-            live_voice_row,
-            textvariable=self.live_voice_status_var,
-            style="Subtitle.TLabel",
-        ).grid(row=0, column=1, sticky="w")
-        self.start_live_voice_button = ttk.Button(
-            live_voice_row,
-            text="Start live clone",
-            style="Primary.TButton",
-            command=self._start_live_voice,
-        )
-        self.start_live_voice_button.grid(row=0, column=2, padx=(10, 0))
-        self.stop_live_voice_button = ttk.Button(
-            live_voice_row,
-            text="Stop live clone",
-            command=self._stop_live_voice,
-        )
-        self.stop_live_voice_button.grid(row=0, column=3, padx=(6, 0))
-        ttk.Label(live_voice_row, text="Quality").grid(
-            row=1, column=0, sticky="w", pady=(6, 0)
-        )
-        self.live_voice_quality_var = tk.StringVar(value="CS2 stable")
-        self.live_voice_quality_combo = ttk.Combobox(
-            live_voice_row,
-            state="readonly",
-            textvariable=self.live_voice_quality_var,
-            values=list(LIVE_VOICE_PRESETS),
-            width=16,
-        )
-        self.live_voice_quality_combo.grid(row=1, column=1, sticky="w", pady=(6, 0))
-        ttk.Label(
-            live_voice_row,
-            text="CS2 stable resists foreground-game GPU contention; "
-            "High fidelity uses more GPU and may add dropouts.",
-            style="Subtitle.TLabel",
-        ).grid(
-            row=1,
-            column=2,
-            columnspan=2,
-            sticky="w",
-            padx=(10, 0),
-            pady=(6, 0),
-        )
-
-        transport = ttk.Frame(outer)
-        transport.grid(row=4, column=0, sticky="ew", pady=(0, 10))
+        transport = ttk.Frame(capture_panel)
+        transport.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         self.record_button = ttk.Button(
             transport,
             text="Record",
@@ -1065,97 +900,117 @@ class OmniVoiceStudio:
         )
         self.record_button.pack(side="left")
         self.stop_button = ttk.Button(transport, text="Stop", command=self._stop_active)
-        self.stop_button.pack(side="left", padx=(8, 0))
+        self.stop_button.pack(side="left", padx=(6, 0))
         self.play_button = ttk.Button(
             transport, text="Play selection", command=self._play_reference
         )
-        self.play_button.pack(side="left", padx=(8, 0))
-        ttk.Separator(transport, orient="vertical").pack(side="left", fill="y", padx=12)
+        self.play_button.pack(side="left", padx=(6, 0))
         self.open_button = ttk.Button(
             transport, text="Open WAV", command=self._open_reference
         )
-        self.open_button.pack(side="left")
+        self.open_button.pack(side="right")
         self.save_button = ttk.Button(
-            transport, text="Save reference", command=self._save_reference
+            transport, text="Save", command=self._save_reference
         )
-        self.save_button.pack(side="left", padx=(8, 0))
+        self.save_button.pack(side="right", padx=(0, 6))
 
-        editor = ttk.Frame(outer)
-        editor.grid(row=5, column=0, sticky="nsew")
-        editor.columnconfigure(0, weight=1)
-        editor.rowconfigure(0, weight=1)
+        waveform_panel = ttk.Labelframe(
+            reference_column,
+            text="Waveform",
+            style="Section.TLabelframe",
+            padding=10,
+        )
+        waveform_panel.grid(row=1, column=0, sticky="nsew")
+        waveform_panel.columnconfigure(0, weight=1)
+        waveform_panel.rowconfigure(0, weight=1)
         self.waveform = WaveformCanvas(
-            editor,
+            waveform_panel,
             on_selection_changed=self._selection_changed,
-            height=265,
+            height=500,
         )
         self.waveform.grid(row=0, column=0, sticky="nsew")
-
-        edit_row = ttk.Frame(editor)
-        edit_row.grid(row=1, column=0, sticky="ew", pady=(8, 14))
+        edit_row = ttk.Frame(waveform_panel)
+        edit_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         self.selection_var = tk.StringVar(value="No selection")
         ttk.Label(edit_row, textvariable=self.selection_var).pack(side="left")
         self.clear_selection_button = ttk.Button(
-            edit_row, text="Clear selection", command=self.waveform.clear_selection
+            edit_row, text="Clear", command=self.waveform.clear_selection
         )
         self.clear_selection_button.pack(side="right")
         self.undo_button = ttk.Button(edit_row, text="Undo", command=self._undo)
-        self.undo_button.pack(side="right", padx=(0, 8))
+        self.undo_button.pack(side="right", padx=(0, 6))
         self.delete_button = ttk.Button(
-            edit_row, text="Delete selection", command=self._delete_selection
+            edit_row, text="Delete", command=self._delete_selection
         )
-        self.delete_button.pack(side="right", padx=(0, 8))
+        self.delete_button.pack(side="right", padx=(0, 6))
         self.keep_button = ttk.Button(
             edit_row, text="Keep selection", command=self._keep_selection
         )
-        self.keep_button.pack(side="right", padx=(0, 8))
+        self.keep_button.pack(side="right", padx=(0, 6))
 
-        lower = ttk.Panedwindow(editor, orient="horizontal")
-        lower.grid(row=2, column=0, sticky="nsew")
+        clone_column = ttk.Frame(workspace, padding=(8, 0))
+        clone_column.columnconfigure(0, weight=1)
+        clone_column.rowconfigure(0, weight=1)
+        clone_column.rowconfigure(1, weight=1)
+        workspace.add(clone_column, weight=4)
 
-        reference_panel = ttk.Labelframe(lower, text="Reference transcript", padding=12)
-        lower.add(reference_panel, weight=1)
-        reference_panel.columnconfigure(0, weight=1)
+        transcript_panel = ttk.Labelframe(
+            clone_column,
+            text="2. Review the reference",
+            style="Section.TLabelframe",
+            padding=10,
+        )
+        transcript_panel.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
+        transcript_panel.columnconfigure(0, weight=1)
+        transcript_panel.rowconfigure(2, weight=1)
         ttk.Label(
-            reference_panel,
-            text="Whisper fills this automatically; edit any mistakes.",
+            transcript_panel,
+            text="Whisper fills this automatically. Correct names or mistakes for text cloning.",
             style="Subtitle.TLabel",
+            wraplength=390,
         ).grid(row=0, column=0, sticky="w")
+        self.auto_transcribe_var = tk.BooleanVar(value=True)
+        self.auto_transcribe_check = ttk.Checkbutton(
+            transcript_panel,
+            text="Auto-transcribe",
+            variable=self.auto_transcribe_var,
+            command=self._auto_transcribe_toggled,
+        )
+        self.auto_transcribe_check.grid(row=1, column=0, sticky="w", pady=(7, 5))
         self.transcript_text = tk.Text(
-            reference_panel,
-            height=6,
+            transcript_panel,
+            height=7,
             wrap="word",
             font=("Segoe UI", 10),
             relief="solid",
             borderwidth=1,
             undo=True,
         )
-        self.transcript_text.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
-        reference_panel.rowconfigure(1, weight=1)
-        transcript_controls = ttk.Frame(reference_panel)
-        transcript_controls.grid(row=2, column=0, sticky="ew", pady=(8, 0))
-        transcript_controls.columnconfigure(0, weight=1)
-        self.auto_transcribe_var = tk.BooleanVar(value=True)
-        self.auto_transcribe_check = ttk.Checkbutton(
-            transcript_controls,
-            text="Auto-transcribe with Whisper",
-            variable=self.auto_transcribe_var,
-            command=self._auto_transcribe_toggled,
-        )
-        self.auto_transcribe_check.grid(row=0, column=0, sticky="w")
+        self.transcript_text.grid(row=2, column=0, sticky="nsew")
+        transcript_footer = ttk.Frame(transcript_panel)
+        transcript_footer.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        ttk.Label(
+            transcript_footer,
+            text="Best: 6-15 s, one clean speaker.",
+            style="Subtitle.TLabel",
+        ).pack(side="left")
         self.transcribe_button = ttk.Button(
-            transcript_controls,
-            text="Transcribe now",
-            command=self._transcribe_now,
+            transcript_footer, text="Transcribe", command=self._transcribe_now
         )
-        self.transcribe_button.grid(row=0, column=1, sticky="e")
+        self.transcribe_button.pack(side="right")
 
-        clone_panel = ttk.Labelframe(lower, text="Clone test", padding=12)
-        lower.add(clone_panel, weight=1)
-        clone_panel.columnconfigure(0, weight=1)
+        generate_panel = ttk.Labelframe(
+            clone_column,
+            text="3. Generate a text clip",
+            style="Section.TLabelframe",
+            padding=10,
+        )
+        generate_panel.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        generate_panel.columnconfigure(0, weight=1)
+        generate_panel.rowconfigure(0, weight=1)
         self.clone_text = tk.Text(
-            clone_panel,
-            height=4,
+            generate_panel,
+            height=8,
             wrap="word",
             font=("Segoe UI", 10),
             relief="solid",
@@ -1166,55 +1021,241 @@ class OmniVoiceStudio:
             "1.0", "This is a test of the voice captured in OmniVoice Studio."
         )
         self.clone_text.grid(row=0, column=0, columnspan=4, sticky="nsew")
-
-        ttk.Label(clone_panel, text="Language").grid(
-            row=1, column=0, sticky="w", pady=(10, 0)
-        )
         self.language_var = tk.StringVar(value="en")
-        ttk.Entry(clone_panel, textvariable=self.language_var, width=8).grid(
+        self.steps_var = tk.IntVar(value=16)
+        ttk.Label(generate_panel, text="Language").grid(
+            row=1, column=0, sticky="w", pady=(8, 0)
+        )
+        ttk.Entry(generate_panel, textvariable=self.language_var, width=7).grid(
             row=2, column=0, sticky="w"
         )
-        ttk.Label(clone_panel, text="Steps").grid(
-            row=1, column=1, sticky="w", padx=(10, 0), pady=(10, 0)
+        ttk.Label(generate_panel, text="Steps").grid(
+            row=1, column=1, sticky="w", padx=(10, 0), pady=(8, 0)
         )
-        self.steps_var = tk.IntVar(value=16)
         ttk.Spinbox(
-            clone_panel,
+            generate_panel,
             from_=4,
             to=64,
             increment=4,
             textvariable=self.steps_var,
-            width=7,
+            width=6,
         ).grid(row=2, column=1, sticky="w", padx=(10, 0))
         self.generate_button = ttk.Button(
-            clone_panel,
-            text="Generate clone",
+            generate_panel,
+            text="Generate",
             style="Primary.TButton",
             command=self._generate_clone,
         )
-        self.generate_button.grid(row=2, column=2, sticky="e", padx=(14, 0))
+        self.generate_button.grid(row=2, column=2, sticky="e", padx=(12, 0))
         self.play_generated_button = ttk.Button(
-            clone_panel,
-            text="Play result",
-            command=self._play_generated,
+            generate_panel, text="Play", command=self._play_generated
         )
-        self.play_generated_button.grid(row=2, column=3, padx=(8, 0))
+        self.play_generated_button.grid(row=2, column=3, padx=(6, 0))
         self.save_generated_button = ttk.Button(
-            clone_panel,
-            text="Save result",
-            command=self._save_generated,
+            generate_panel, text="Save", command=self._save_generated
         )
-        self.save_generated_button.grid(row=3, column=3, sticky="e", pady=(8, 0))
+        self.save_generated_button.grid(row=3, column=3, sticky="e", pady=(6, 0))
+        self.send_to_mic_button = ttk.Button(
+            generate_panel,
+            text="Send latest clip to CS2 mixer",
+            command=self._queue_generated_to_mixer,
+        )
+        self.send_to_mic_button.grid(
+            row=3, column=0, columnspan=3, sticky="ew", pady=(6, 0)
+        )
+
+        live_column = ttk.Frame(workspace, padding=(8, 0, 0, 0))
+        live_column.columnconfigure(0, weight=1)
+        live_column.rowconfigure(1, weight=1)
+        workspace.add(live_column, weight=4)
+
+        live_panel = ttk.Labelframe(
+            live_column,
+            text="4. Go live in CS2",
+            style="Section.TLabelframe",
+            padding=12,
+        )
+        live_panel.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        live_panel.columnconfigure(1, weight=1)
+        ttk.Label(live_panel, text="Reference").grid(row=0, column=0, sticky="w")
+        self.live_reference_var = tk.StringVar(value="No reference loaded")
+        ttk.Label(
+            live_panel, textvariable=self.live_reference_var, style="Route.TLabel"
+        ).grid(row=0, column=1, columnspan=2, sticky="w", padx=(8, 0))
+        ttk.Label(live_panel, text="Quality").grid(
+            row=1, column=0, sticky="w", pady=(8, 0)
+        )
+        self.live_voice_quality_var = tk.StringVar(value=self.initial_live_quality)
+        self.live_voice_quality_combo = ttk.Combobox(
+            live_panel,
+            state="readonly",
+            textvariable=self.live_voice_quality_var,
+            values=list(LIVE_VOICE_PRESETS),
+            width=17,
+        )
+        self.live_voice_quality_combo.grid(
+            row=1, column=1, sticky="w", padx=(8, 0), pady=(8, 0)
+        )
+        self.live_voice_quality_combo.bind(
+            "<<ComboboxSelected>>", self._live_quality_selected
+        )
+        self.start_live_voice_button = ttk.Button(
+            live_panel,
+            text="Start live clone",
+            style="Primary.TButton",
+            command=self._start_live_voice,
+        )
+        self.start_live_voice_button.grid(
+            row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0)
+        )
+        self.stop_live_voice_button = ttk.Button(
+            live_panel, text="Stop live clone", command=self._stop_live_voice
+        )
+        self.stop_live_voice_button.grid(row=2, column=2, padx=(6, 0), pady=(12, 0))
+        self.live_voice_status_var = tk.StringVar(
+            value="Choose quality, then start live conversion."
+        )
+        ttk.Label(
+            live_panel,
+            textvariable=self.live_voice_status_var,
+            style="Subtitle.TLabel",
+            wraplength=380,
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(10, 0))
+
+        mixer_panel = ttk.Labelframe(
+            live_column,
+            text="Game route and levels",
+            style="Section.TLabelframe",
+            padding=12,
+        )
+        mixer_panel.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        mixer_panel.columnconfigure(0, weight=1)
+        ttk.Label(mixer_panel, text="Live microphone").grid(row=0, column=0, sticky="w")
+        self.mixer_mic_combo = ttk.Combobox(mixer_panel, state="readonly")
+        self.mixer_mic_combo.grid(row=1, column=0, sticky="ew", pady=(3, 8))
+        ttk.Label(mixer_panel, text="Virtual feed").grid(row=2, column=0, sticky="w")
+        self.virtual_output_combo = ttk.Combobox(mixer_panel, state="readonly")
+        self.virtual_output_combo.grid(row=3, column=0, sticky="ew", pady=(3, 10))
+
+        self.microphone_gain_var = tk.DoubleVar(value=1.0)
+        self.generated_gain_var = tk.DoubleVar(value=1.0)
+        self.microphone_gain_label = tk.StringVar(value="Mic 100%")
+        self.generated_gain_label = tk.StringVar(value="AI 100%")
+        ttk.Label(mixer_panel, textvariable=self.microphone_gain_label).grid(
+            row=4, column=0, sticky="w"
+        )
+        self.microphone_gain_scale = ttk.Scale(
+            mixer_panel,
+            from_=0.0,
+            to=2.0,
+            variable=self.microphone_gain_var,
+            command=lambda _value: self._mixer_gain_changed(),
+        )
+        self.microphone_gain_scale.grid(row=5, column=0, sticky="ew")
+        ttk.Label(mixer_panel, textvariable=self.generated_gain_label).grid(
+            row=6, column=0, sticky="w", pady=(8, 0)
+        )
+        self.generated_gain_scale = ttk.Scale(
+            mixer_panel,
+            from_=0.0,
+            to=2.0,
+            variable=self.generated_gain_var,
+            command=lambda _value: self._mixer_gain_changed(),
+        )
+        self.generated_gain_scale.grid(row=7, column=0, sticky="ew")
+
+        meter_row = ttk.Frame(mixer_panel)
+        meter_row.grid(row=8, column=0, sticky="ew", pady=(12, 0))
+        meter_row.columnconfigure(1, weight=1)
+        ttk.Label(meter_row, text="Mic").grid(row=0, column=0, padx=(0, 6))
+        self.microphone_meter = ttk.Progressbar(meter_row, maximum=100)
+        self.microphone_meter.grid(row=0, column=1, sticky="ew")
+        ttk.Label(meter_row, text="AI").grid(row=1, column=0, padx=(0, 6), pady=(5, 0))
+        self.generated_meter = ttk.Progressbar(meter_row, maximum=100)
+        self.generated_meter.grid(row=1, column=1, sticky="ew", pady=(5, 0))
+        ttk.Label(meter_row, text="Out").grid(row=2, column=0, padx=(0, 6), pady=(5, 0))
+        self.output_meter = ttk.Progressbar(meter_row, maximum=100)
+        self.output_meter.grid(row=2, column=1, sticky="ew", pady=(5, 0))
+
+        mixer_actions = ttk.Frame(mixer_panel)
+        mixer_actions.grid(row=9, column=0, sticky="ew", pady=(12, 0))
+        self.start_mixer_button = ttk.Button(
+            mixer_actions, text="Start normal mixer", command=self._start_mixer
+        )
+        self.start_mixer_button.pack(side="left")
+        self.stop_mixer_button = ttk.Button(
+            mixer_actions, text="Stop", command=self._stop_mixer
+        )
+        self.stop_mixer_button.pack(side="left", padx=(6, 0))
+        self.mixer_status_var = tk.StringVar(value="CS2 input: Voicemeeter Out 6")
+        ttk.Label(
+            mixer_panel,
+            textvariable=self.mixer_status_var,
+            style="Subtitle.TLabel",
+            wraplength=360,
+        ).grid(row=10, column=0, sticky="w", pady=(10, 0))
+        self.live_ready_var = tk.StringVar(value="Reference: missing")
+        ttk.Label(
+            mixer_panel, textvariable=self.live_ready_var, style="Route.TLabel"
+        ).grid(row=11, column=0, sticky="w", pady=(12, 0))
+
+        hotkey_panel = ttk.Labelframe(
+            outer,
+            text="Global hotkeys - active while CS2 is focused",
+            style="Section.TLabelframe",
+            padding=(10, 7),
+        )
+        hotkey_panel.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        hotkey_panel.columnconfigure(1, weight=1)
+        hotkey_panel.columnconfigure(4, weight=1)
+        ttk.Label(hotkey_panel, text="Record").grid(row=0, column=0, sticky="w")
+        self.record_hotkey_var = tk.StringVar(value=self.initial_record_hotkey)
+        self.record_hotkey_entry = ttk.Entry(
+            hotkey_panel, textvariable=self.record_hotkey_var
+        )
+        self.record_hotkey_entry.grid(row=0, column=1, sticky="ew", padx=(6, 4))
+        self.detect_record_hotkey_button = ttk.Button(
+            hotkey_panel, text="Detect", command=lambda: self._detect_hotkey("record")
+        )
+        self.detect_record_hotkey_button.grid(row=0, column=2)
+        ttk.Label(hotkey_panel, text="Stop").grid(row=0, column=3, padx=(14, 0))
+        self.stop_hotkey_var = tk.StringVar(value=self.initial_stop_hotkey)
+        self.stop_hotkey_entry = ttk.Entry(
+            hotkey_panel, textvariable=self.stop_hotkey_var
+        )
+        self.stop_hotkey_entry.grid(row=0, column=4, sticky="ew", padx=(6, 4))
+        self.detect_stop_hotkey_button = ttk.Button(
+            hotkey_panel, text="Detect", command=lambda: self._detect_hotkey("stop")
+        )
+        self.detect_stop_hotkey_button.grid(row=0, column=5)
+        ttk.Label(hotkey_panel, text="Play AI").grid(row=0, column=6, padx=(14, 0))
+        self.play_hotkey_var = tk.StringVar(value=self.initial_play_hotkey)
+        self.play_hotkey_entry = ttk.Entry(
+            hotkey_panel, textvariable=self.play_hotkey_var, width=15
+        )
+        self.play_hotkey_entry.grid(row=0, column=7, padx=(6, 4))
+        self.detect_play_hotkey_button = ttk.Button(
+            hotkey_panel, text="Detect", command=lambda: self._detect_hotkey("play")
+        )
+        self.detect_play_hotkey_button.grid(row=0, column=8)
+        self.apply_hotkeys_button = ttk.Button(
+            hotkey_panel, text="Apply", command=self._apply_hotkeys
+        )
+        self.apply_hotkeys_button.grid(row=0, column=9, padx=(10, 0))
+        self.hotkey_status_var = tk.StringVar(value="Not registered")
+        ttk.Label(
+            hotkey_panel, textvariable=self.hotkey_status_var, style="Subtitle.TLabel"
+        ).grid(row=1, column=0, columnspan=10, sticky="w", pady=(5, 0))
 
         footer = ttk.Frame(outer)
-        footer.grid(row=6, column=0, sticky="ew", pady=(14, 0))
+        footer.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         footer.columnconfigure(0, weight=1)
         self.status_var = tk.StringVar(value="Ready")
         self.status_label = ttk.Label(
             footer, textvariable=self.status_var, style="Status.TLabel"
         )
         self.status_label.grid(row=0, column=0, sticky="w")
-        self.progress = ttk.Progressbar(footer, mode="indeterminate", length=150)
+        self.progress = ttk.Progressbar(footer, mode="indeterminate", length=180)
         self.progress.grid(row=0, column=1, sticky="e")
         self.progress.grid_remove()
 
@@ -1225,12 +1266,13 @@ class OmniVoiceStudio:
 
     def _load_hotkey_settings(
         self,
-    ) -> tuple[str, str, str, str | None]:
+    ) -> tuple[str, str, str, str, str | None]:
         if not HOTKEY_CONFIG_PATH.exists():
             return (
                 DEFAULT_RECORD_HOTKEY,
                 DEFAULT_STOP_HOTKEY,
                 DEFAULT_PLAY_HOTKEY,
+                "High fidelity",
                 None,
             )
         try:
@@ -1240,9 +1282,12 @@ class OmniVoiceStudio:
             play = parse_hotkey(
                 str(settings.get("play_hotkey", DEFAULT_PLAY_HOTKEY))
             ).text
+            quality = str(settings.get("live_quality", "High fidelity"))
+            if quality not in LIVE_VOICE_PRESETS:
+                raise ValueError(f"Unknown live quality preset: {quality}")
             if len({record, stop, play}) != 3:
                 raise ValueError("Record, stop, and play hotkeys must differ.")
-            return record, stop, play, None
+            return record, stop, play, quality, None
         except (
             json.JSONDecodeError,
             KeyError,
@@ -1254,6 +1299,7 @@ class OmniVoiceStudio:
                 DEFAULT_RECORD_HOTKEY,
                 DEFAULT_STOP_HOTKEY,
                 DEFAULT_PLAY_HOTKEY,
+                "High fidelity",
                 f"Hotkey settings were invalid; defaults restored: {exc}",
             )
 
@@ -1265,12 +1311,26 @@ class OmniVoiceStudio:
                     "record_hotkey": self.record_hotkey_var.get(),
                     "stop_hotkey": self.stop_hotkey_var.get(),
                     "play_hotkey": self.play_hotkey_var.get(),
+                    "live_quality": self.live_voice_quality_var.get(),
                 },
                 indent=2,
             )
             + os.linesep,
             encoding="utf-8",
         )
+
+    def _live_quality_selected(self, _event=None) -> None:
+        try:
+            self._save_hotkey_settings()
+            self._set_status(
+                f"Live quality set to {self.live_voice_quality_var.get()}.",
+                "success",
+            )
+        except OSError as exc:
+            self._set_status(
+                f"Could not save live quality: {exc}",
+                "error",
+            )
 
     def _restore_active_hotkeys(self) -> None:
         if not self.hotkey_specs:
@@ -1818,11 +1878,10 @@ class OmniVoiceStudio:
             if log_file is not None:
                 log_file.close()
 
-    def _stop_live_voice(self, restart: bool = False) -> None:
+    def _stop_live_voice(self) -> None:
         process = self.live_voice_process
         if process is None or process.poll() is not None:
             return
-        self.live_voice_restart_pending = restart
         self.live_voice_status_var.set("Stopping live voice conversion...")
         try:
             if process.stdin is not None:
@@ -1835,7 +1894,6 @@ class OmniVoiceStudio:
         self._update_controls()
 
     def _force_stop_live_voice(self) -> None:
-        self.live_voice_restart_pending = False
         process = self.live_voice_process
         if process is None or process.poll() is not None:
             return
@@ -1927,14 +1985,20 @@ class OmniVoiceStudio:
     def _selection_changed(self, selection: tuple[float, float] | None) -> None:
         if self.audio is None:
             self.selection_var.set("No selection")
+            self.live_reference_var.set("No reference loaded")
+            self.live_ready_var.set("Reference: missing")
         elif selection is None:
             duration = len(self.audio) / REFERENCE_SAMPLE_RATE
             self.selection_var.set(f"Full clip: {duration:.2f}s")
+            self.live_reference_var.set(f"Full edited clip - {duration:.2f}s")
+            self.live_ready_var.set(f"Reference: ready ({duration:.2f}s)")
         else:
             start, end = sorted(selection)
             self.selection_var.set(
                 f"Selection: {start:.2f}s - {end:.2f}s ({end - start:.2f}s)"
             )
+            self.live_reference_var.set(f"Selected range - {end - start:.2f}s")
+            self.live_ready_var.set(f"Reference: selected ({end - start:.2f}s)")
         self._update_controls()
         self._schedule_auto_transcription()
 
@@ -2395,47 +2459,19 @@ class OmniVoiceStudio:
                     except ValueError:
                         self.live_voice_infer_ms = 0.0
                 elif kind == "live_voice_overloaded":
-                    if self.live_voice_active_preset not in {
-                        "CS2 stable",
-                        "CS2 survival",
-                    }:
-                        fallback = "CS2 stable"
-                    elif self.live_voice_active_preset == "CS2 stable":
-                        fallback = "CS2 survival"
-                    else:
-                        fallback = None
-
-                    if fallback is not None:
-                        self.live_voice_quality_var.set(fallback)
-                        self.live_voice_status_var.set(
-                            f"CS2 GPU load is starving "
-                            f"{self.live_voice_active_preset}; switching "
-                            f"automatically to {fallback}..."
-                        )
-                        self._set_status(
-                            f"Live clone overload detected; applying {fallback}.",
-                            "error",
-                        )
-                        self._stop_live_voice(restart=True)
-                    else:
-                        self.live_voice_status_var.set(
-                            "CS2 survival is buffering delayed AI output. "
-                            "The voice may pause, but raw mic is never exposed."
-                        )
-                        self._set_status(
-                            "Maximum overload recovery is active.",
-                            "error",
-                        )
+                    self.live_voice_status_var.set(
+                        f"{self.live_voice_active_preset} is GPU-limited. "
+                        "The selected quality remains unchanged; converted "
+                        "audio will be buffered and may arrive late."
+                    )
+                    self._set_status(
+                        "Live clone overload detected; quality was not changed.",
+                        "error",
+                    )
                 elif kind == "live_voice_stopped":
                     _, return_code = event
                     self.live_voice_process = None
-                    if self.live_voice_restart_pending:
-                        self.live_voice_restart_pending = False
-                        self.live_voice_status_var.set(
-                            "Restarting live conversion with CS2 stable..."
-                        )
-                        self.root.after(250, self._start_live_voice)
-                    elif return_code == 0:
+                    if return_code == 0:
                         self.live_voice_status_var.set(
                             "Live clone stopped. Record/open a reference to restart."
                         )

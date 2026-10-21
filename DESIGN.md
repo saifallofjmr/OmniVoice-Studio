@@ -3,9 +3,9 @@
 ## Direction
 
 OmniVoice Studio is a compact native audio workbench. It uses familiar desktop
-controls and a waveform-first hierarchy rather than a web dashboard or a
-multi-step wizard. The user can see the entire capture-to-clone workflow in one
-window.
+controls and a waveform-first hierarchy rather than a web dashboard, tab set,
+or multi-step wizard. The full capture-to-clone workflow stays visible in one
+workspace.
 
 ## Visual System
 
@@ -26,23 +26,16 @@ remain compact and readable without using monospace as decoration.
 
 ## Layout
 
-The window follows the task order:
+The window is a three-column command center that follows the task order:
 
-1. Identity and purpose.
-2. System-output device selection.
-3. Persistent global record, stop, and play-AI hotkeys with visible bindings.
-4. Game microphone mixer with source/destination choices, gain, meters, and
-   explicit live state.
-5. Live AI clone controls that prepare the current reference, start or stop
-   zero-shot conversion, and expose measured delay in plain text.
-6. Record, stop, playback, open, and save controls.
-7. Large waveform editor with selection and reversible clipping actions.
-8. Side-by-side automatic Whisper transcript and text-clone test work areas.
-9. Persistent status line and generation progress.
+1. **Left:** capture controls and a large waveform editor.
+2. **Center:** Whisper transcript and text-clone generation.
+3. **Right:** live-clone readiness, quality, routing, mixer gain, and meters.
+4. **Bottom:** persistent global hotkeys and application status.
 
 The waveform receives the largest share of space because audio selection is the
-precision task. Transcript and clone testing remain simultaneously visible so
-the user can correct words and immediately validate the reference.
+precision task. Transcript, text generation, live readiness, and routing remain
+simultaneously visible so the user never has to navigate away from context.
 
 Whisper transcription is visibly automatic but never treated as infallible:
 the transcript remains a normal editable field, a manual transcribe action is
@@ -65,9 +58,9 @@ available, and status text asks the user to review the result.
   Fast, Balanced, CS2 stable, and High fidelity state the latency/similarity
   tradeoff while the engine receives the underlying prompt, guidance, step,
   and context values.
-- Foreground-game overload is recoverable state: Studio explains the GPU
-  conflict, stops the starved worker, and restarts the same reference with the
-  stable profile rather than silently losing microphone output.
+- Foreground-game overload is visible state: Studio explains the GPU conflict
+  without changing quality, stopping the worker, or overriding the user's
+  choice.
 - Survival recovery is honest about degradation: converted audio may pause and
   accumulate delay, while status text explains that overload buffering is
   active and the raw microphone remains private.
