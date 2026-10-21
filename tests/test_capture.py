@@ -223,55 +223,63 @@ def test_live_voice_watcher_detects_repeated_underruns():
     assert ("live_voice_overloaded",) in events
 
 
-def test_overload_recovery_passes_raw_mic_during_ai_gap():
+def test_overload_recovery_expands_delay_buffers():
     class FakeEngine:
-        @staticmethod
-        def _audio_callback(_indata, outdata, _frames, _times, _status):
-            outdata[:] = 0
-
-        @staticmethod
-        def _pop_input():
-            return "block"
-
         _ring_lock = threading.Lock()
-        _in_avail = 10
         block_frame = 10
-        _in_r = 0
-        _in_ring = np.zeros(40, dtype=np.float32)
+        _prime_frames = 20
 
-    engine = FakeEngine()
-    install_overload_recovery(engine)
-    input_audio = np.full((10, 1), 0.1, dtype=np.float32)
-    output_audio = np.zeros((10, 2), dtype=np.float32)
+        def _prepare_buffers(self):
+            self._in_ring = np.zeros(40, dtype=np.float32)
+            self._out_ring = np.zeros(40, dtype=np.float32)
 
-    engine._audio_callback(input_audio, output_audio, 10, None, None)
-
-    np.testing.assert_allclose(output_audio[:, 0], 0.1)
-    np.testing.assert_allclose(output_audio[:, 1], 0.1)
-
-
-def test_overload_recovery_drops_stale_input_blocks():
-    class FakeEngine:
         @staticmethod
-        def _audio_callback(_indata, _outdata, _frames, _times, _status):
+        def _push_output(_block):
             return None
 
         @staticmethod
-        def _pop_input():
-            return "latest"
-
-        _ring_lock = threading.Lock()
-        _in_avail = 40
-        block_frame = 10
-        _in_r = 0
-        _in_ring = np.zeros(80, dtype=np.float32)
+        def _ring_write(ring, write_index, data):
+            ring[write_index : write_index + len(data)] = data
 
     engine = FakeEngine()
     install_overload_recovery(engine)
+    engine._prepare_buffers()
 
-    assert engine._pop_input() == "latest"
-    assert engine._in_avail == 10
-    assert engine._in_r == 30
+    assert len(engine._in_ring) == 320
+    assert len(engine._out_ring) == 320
+    assert engine._out_avail == 20
+    assert engine._out_w == 20
+
+
+def test_overload_recovery_preserves_delayed_ai_output():
+    class FakeEngine:
+        _ring_lock = threading.Lock()
+        block_frame = 10
+        _prime_frames = 20
+
+        def _prepare_buffers(self):
+            self._in_ring = np.zeros(40, dtype=np.float32)
+            self._out_ring = np.zeros(40, dtype=np.float32)
+
+        @staticmethod
+        def _push_output(_block):
+            return None
+
+        @staticmethod
+        def _ring_write(ring, write_index, data):
+            ring[write_index : write_index + len(data)] = data
+
+    engine = FakeEngine()
+    install_overload_recovery(engine)
+    engine._prepare_buffers()
+    engine._out_debt = 10
+    block = np.full(10, 0.25, dtype=np.float32)
+
+    engine._push_output(block)
+
+    assert engine._out_debt == 0
+    assert engine._out_avail == 30
+    np.testing.assert_allclose(engine._out_ring[20:30], block)
 
 
 @pytest.mark.parametrize(

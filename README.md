@@ -396,9 +396,10 @@ Studio watches Seed-VC's stream for repeated output underruns. If High fidelity
 or Balanced becomes starved when CS2 takes GPU focus, Studio automatically
 restarts the same reference with **CS2 stable** instead of allowing the virtual
 microphone to fall permanently silent. If CS2 stable also overloads, Studio
-restarts with **CS2 survival**. Survival mode drops stale conversion chunks and
-passes the live microphone through during missed AI blocks, so the virtual
-microphone remains audible instead of becoming silent.
+restarts with **CS2 survival**. Survival mode keeps a larger converted-audio
+buffer and preserves delayed AI blocks instead of discarding them. Under severe
+load the converted voice can pause and arrive later, but Studio never exposes
+the raw microphone.
 
 The live engine is installed separately at `%USERPROFILE%\SeedVC` with Python
 3.10 and CUDA 12.8 so its model dependencies cannot conflict with OmniVoice.

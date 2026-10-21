@@ -2419,8 +2419,8 @@ class OmniVoiceStudio:
                         self._stop_live_voice(restart=True)
                     else:
                         self.live_voice_status_var.set(
-                            "CS2 survival is dropping stale AI chunks and "
-                            "passing raw mic during gaps so output stays live."
+                            "CS2 survival is buffering delayed AI output. "
+                            "The voice may pause, but raw mic is never exposed."
                         )
                         self._set_status(
                             "Maximum overload recovery is active.",

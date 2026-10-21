@@ -27,46 +27,80 @@ def get_parser() -> argparse.ArgumentParser:
 
 
 def install_overload_recovery(engine) -> None:
-    original_callback = engine._audio_callback
-    original_pop_input = engine._pop_input
-    last_passthrough_report = 0.0
-    last_drop_report = 0.0
+    original_prepare_buffers = engine._prepare_buffers
+    last_debt_report = 0.0
 
-    def resilient_callback(self, indata, outdata, frames, times, status):
-        nonlocal last_passthrough_report
-        original_callback(indata, outdata, frames, times, status)
-        input_mono = np.mean(indata, axis=1, dtype=np.float32)
-        input_rms = float(np.sqrt(np.mean(np.square(input_mono), dtype=np.float64)))
-        output_peak = float(np.max(np.abs(outdata), initial=0.0))
-        if input_rms >= 0.005 and output_peak < 1e-5:
-            outdata[:] = input_mono[:, None]
-            now = time.monotonic()
-            if now - last_passthrough_report >= 1.0:
-                last_passthrough_report = now
-                print("RECOVERY raw_passthrough", flush=True)
+    def prepare_larger_rings(self):
+        original_prepare_buffers()
+        ring_capacity = 32 * self.block_frame
+        self._in_ring = np.zeros(ring_capacity, dtype=np.float32)
+        self._in_r = 0
+        self._in_w = 0
+        self._in_avail = 0
+        self._out_ring = np.zeros(ring_capacity, dtype=np.float32)
+        self._out_r = 0
+        self._out_w = self._prime_frames
+        self._out_avail = self._prime_frames
+        self._out_debt = 0
 
-    def pop_latest_input(self):
-        nonlocal last_drop_report
-        dropped_blocks = 0
+    def push_delayed_output(self, block):
+        nonlocal last_debt_report
         with self._ring_lock:
-            complete_blocks = self._in_avail // self.block_frame
-            if complete_blocks > 1:
-                dropped_blocks = complete_blocks - 1
-                dropped_frames = dropped_blocks * self.block_frame
-                self._in_r = (self._in_r + dropped_frames) % len(self._in_ring)
-                self._in_avail -= dropped_frames
-        if dropped_blocks:
+            preserved_debt = self._out_debt
+            self._out_debt = 0
+            if self._out_avail + len(block) > len(self._out_ring):
+                print("RECOVERY delay_buffer_full", flush=True)
+                return
+            self._ring_write(self._out_ring, self._out_w, block)
+            self._out_w = (self._out_w + len(block)) % len(self._out_ring)
+            self._out_avail += len(block)
+        if preserved_debt:
             now = time.monotonic()
-            if now - last_drop_report >= 1.0:
-                last_drop_report = now
+            if now - last_debt_report >= 1.0:
+                last_debt_report = now
                 print(
-                    f"RECOVERY dropped_stale_blocks={dropped_blocks}",
+                    f"RECOVERY preserved_delayed_frames={preserved_debt}",
                     flush=True,
                 )
-        return original_pop_input()
 
-    engine._audio_callback = MethodType(resilient_callback, engine)
-    engine._pop_input = MethodType(pop_latest_input, engine)
+    engine._prepare_buffers = MethodType(prepare_larger_rings, engine)
+    engine._push_output = MethodType(push_delayed_output, engine)
+
+
+def precompute_reference_condition(engine) -> None:
+    import librosa
+    import torch
+    import torchaudio
+
+    model, semantic_fn, _vocoder, campplus_model, to_mel, mel_args = engine.model_set
+    sample_rate = mel_args["sampling_rate"]
+    reference, _ = librosa.load(
+        engine.config.reference_audio_path,
+        sr=sample_rate,
+    )
+    reference = reference[: int(sample_rate * engine.config.max_prompt_length)]
+    reference_tensor = torch.from_numpy(reference).to(engine.device)
+    reference_16k = torchaudio.functional.resample(reference_tensor, sample_rate, 16000)
+    semantic = semantic_fn(reference_16k.unsqueeze(0))
+    features = torchaudio.compliance.kaldi.fbank(
+        reference_16k.unsqueeze(0),
+        num_mel_bins=80,
+        dither=0,
+        sample_frequency=16000,
+    )
+    features = features - features.mean(dim=0, keepdim=True)
+    engine.style2 = campplus_model(features.unsqueeze(0))
+    engine.mel2 = to_mel(reference_tensor.unsqueeze(0))
+    target_lengths = torch.LongTensor([engine.mel2.size(2)]).to(engine.mel2.device)
+    engine.prompt_condition = model.length_regulator(
+        semantic,
+        ylens=target_lengths,
+        n_quantizers=3,
+        f0=None,
+    )[0]
+    engine.reference_wav = reference
+    engine.reference_wav_name = engine.config.reference_audio_path
+    engine.prompt_len = engine.config.max_prompt_length
 
 
 def main() -> int:
@@ -76,6 +110,7 @@ def main() -> int:
     sys.path.insert(0, seed_vc_dir)
 
     try:
+        import torch
         from realtime_vc_engine import RealtimeVCEngine
 
         if sys.platform == "win32":
@@ -84,6 +119,10 @@ def main() -> int:
                 ctypes.windll.kernel32.GetCurrentProcess(),
                 above_normal_priority,
             )
+
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
         engine = RealtimeVCEngine(
             SimpleNamespace(
@@ -120,6 +159,7 @@ def main() -> int:
             extra_time=args.extra_time,
             extra_time_right=0.02,
         )
+        precompute_reference_condition(engine)
         engine.start_stream()
         print(f"READY delay_ms={engine.delay_time * 1000:.1f}", flush=True)
         sys.stdin.readline()
