@@ -76,6 +76,14 @@ LIVE_VOICE_PRESETS = {
         "extra_time_ce": 3.0,
         "extra_time": 0.7,
     },
+    "CS2 stable": {
+        "diffusion_steps": 8,
+        "inference_cfg_rate": 0.0,
+        "max_prompt_length": 6.0,
+        "block_time": 0.3,
+        "extra_time_ce": 2.5,
+        "extra_time": 0.5,
+    },
     "High fidelity": {
         "diffusion_steps": 12,
         "inference_cfg_rate": 0.7,
@@ -728,6 +736,8 @@ class OmniVoiceStudio:
         self.mixer = RealtimeMicMixer(self.events)
         self.live_voice_process: subprocess.Popen | None = None
         self.live_voice_active_preset = ""
+        self.live_voice_restart_pending = False
+        self.live_voice_infer_ms = 0.0
         (
             self.initial_record_hotkey,
             self.initial_stop_hotkey,
@@ -990,7 +1000,7 @@ class OmniVoiceStudio:
         ttk.Label(live_voice_row, text="Quality").grid(
             row=1, column=0, sticky="w", pady=(6, 0)
         )
-        self.live_voice_quality_var = tk.StringVar(value="High fidelity")
+        self.live_voice_quality_var = tk.StringVar(value="CS2 stable")
         self.live_voice_quality_combo = ttk.Combobox(
             live_voice_row,
             state="readonly",
@@ -1001,8 +1011,8 @@ class OmniVoiceStudio:
         self.live_voice_quality_combo.grid(row=1, column=1, sticky="w", pady=(6, 0))
         ttk.Label(
             live_voice_row,
-            text="High fidelity uses up to 10 seconds of clean reference "
-            "audio and adds latency.",
+            text="CS2 stable resists foreground-game GPU contention; "
+            "High fidelity uses more GPU and may add dropouts.",
             style="Subtitle.TLabel",
         ).grid(
             row=1,
@@ -1740,6 +1750,8 @@ class OmniVoiceStudio:
 
     def _watch_live_voice(self, process: subprocess.Popen) -> None:
         log_file = None
+        underrun_times = []
+        overload_notified = False
         try:
             log_file = SEED_VC_LOG.open("a", encoding="utf-8")
         except OSError:
@@ -1755,16 +1767,30 @@ class OmniVoiceStudio:
                         self.events.put(("live_voice_ready", stripped))
                     elif stripped.startswith("ERROR"):
                         self.events.put(("live_voice_error", stripped[6:]))
+                    elif stripped.startswith("PERF infer_ms="):
+                        self.events.put(("live_voice_perf", stripped.partition("=")[2]))
+                    elif "output underrun" in stripped:
+                        now = time.monotonic()
+                        underrun_times = [
+                            timestamp
+                            for timestamp in underrun_times
+                            if now - timestamp <= 5.0
+                        ]
+                        underrun_times.append(now)
+                        if len(underrun_times) >= 3 and not overload_notified:
+                            overload_notified = True
+                            self.events.put(("live_voice_overloaded",))
             return_code = process.wait()
             self.events.put(("live_voice_stopped", return_code))
         finally:
             if log_file is not None:
                 log_file.close()
 
-    def _stop_live_voice(self) -> None:
+    def _stop_live_voice(self, restart: bool = False) -> None:
         process = self.live_voice_process
         if process is None or process.poll() is not None:
             return
+        self.live_voice_restart_pending = restart
         self.live_voice_status_var.set("Stopping live voice conversion...")
         try:
             if process.stdin is not None:
@@ -1777,6 +1803,7 @@ class OmniVoiceStudio:
         self._update_controls()
 
     def _force_stop_live_voice(self) -> None:
+        self.live_voice_restart_pending = False
         process = self.live_voice_process
         if process is None or process.poll() is not None:
             return
@@ -2329,10 +2356,44 @@ class OmniVoiceStudio:
                     _, detail = event
                     self.live_voice_status_var.set(f"Live clone error: {detail}")
                     self._set_status(f"Live clone error: {detail}", "error")
+                elif kind == "live_voice_perf":
+                    _, infer_ms = event
+                    try:
+                        self.live_voice_infer_ms = float(infer_ms)
+                    except ValueError:
+                        self.live_voice_infer_ms = 0.0
+                elif kind == "live_voice_overloaded":
+                    if self.live_voice_active_preset != "CS2 stable":
+                        self.live_voice_quality_var.set("CS2 stable")
+                        self.live_voice_status_var.set(
+                            "CS2 GPU load is starving High Fidelity; "
+                            "switching automatically to CS2 stable..."
+                        )
+                        self._set_status(
+                            "Live clone overload detected; applying the "
+                            "CS2 stable profile.",
+                            "error",
+                        )
+                        self._stop_live_voice(restart=True)
+                    else:
+                        self.live_voice_status_var.set(
+                            "CS2 stable is still GPU-limited. Cap CS2 FPS "
+                            "until GPU usage stays below about 85%."
+                        )
+                        self._set_status(
+                            "Live conversion is GPU-limited by CS2.",
+                            "error",
+                        )
                 elif kind == "live_voice_stopped":
                     _, return_code = event
                     self.live_voice_process = None
-                    if return_code == 0:
+                    if self.live_voice_restart_pending:
+                        self.live_voice_restart_pending = False
+                        self.live_voice_status_var.set(
+                            "Restarting live conversion with CS2 stable..."
+                        )
+                        self.root.after(250, self._start_live_voice)
+                    elif return_code == 0:
                         self.live_voice_status_var.set(
                             "Live clone stopped. Record/open a reference to restart."
                         )

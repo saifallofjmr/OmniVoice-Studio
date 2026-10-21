@@ -383,12 +383,19 @@ Choose a live quality preset before starting:
 |---|---:|---:|---|
 | Fast | Up to 3 s | CFG 0.0 / 4 steps | Lowest latency, weakest similarity |
 | Balanced | Up to 6 s | CFG 0.4 / 8 steps | Better identity with moderate delay |
+| CS2 stable | Up to 6 s | CFG 0.0 / 8 steps | Default; resists foreground-game GPU contention |
 | High fidelity | Up to 10 s | CFG 0.7 / 12 steps | Closest zero-shot match, highest delay |
 
 For the closest result, use **High fidelity** with 6-15 seconds of one clean,
 dry speaker at a healthy level. Remove music, game audio, reverberation,
 overlapping voices, long silences, and clipped peaks. Similar source and target
 pitch/register also improves perceived identity.
+
+Studio watches Seed-VC's stream for repeated output underruns. If High fidelity
+or Balanced becomes starved when CS2 takes GPU focus, Studio automatically
+restarts the same reference with **CS2 stable** instead of allowing the virtual
+microphone to fall permanently silent. If CS2 stable also reports overload,
+cap the game's frame rate until GPU utilization remains below roughly 85%.
 
 The live engine is installed separately at `%USERPROFILE%\SeedVC` with Python
 3.10 and CUDA 12.8 so its model dependencies cannot conflict with OmniVoice.

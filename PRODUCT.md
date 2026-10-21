@@ -60,6 +60,9 @@ muted during capture.
 - Live conversion exposes fast, balanced, and high-fidelity presets that trade
   latency for prompt duration, similarity guidance, diffusion steps, and
   context.
+- A CS2-stable preset and underrun monitor automatically recover from
+  foreground-game GPU starvation instead of leaving the virtual microphone
+  silent.
 - The initial implementation is a local Python desktop app using native desktop
   controls, not a hosted web interface.
 

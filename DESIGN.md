@@ -62,8 +62,12 @@ available, and status text asks the user to review the result.
   the normal mixer, releases other GPU models, and disables conflicting
   capture/generation actions until conversion ends.
 - Quality is a named operational choice, not a cluster of model parameters:
-  Fast, Balanced, and High fidelity state the latency/similarity tradeoff while
-  the engine receives the underlying prompt, guidance, step, and context values.
+  Fast, Balanced, CS2 stable, and High fidelity state the latency/similarity
+  tradeoff while the engine receives the underlying prompt, guidance, step,
+  and context values.
+- Foreground-game overload is recoverable state: Studio explains the GPU
+  conflict, stops the starved worker, and restarts the same reference with the
+  stable profile rather than silently losing microphone output.
 - Hotkey detection uses a focused, temporary capture dialog because assigning
   a system-wide shortcut is a protected-focus task; the existing bindings are
   paused only for the duration of capture and restored on cancellation.

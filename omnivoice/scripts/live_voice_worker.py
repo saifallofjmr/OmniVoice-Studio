@@ -1,8 +1,10 @@
 """Run Seed-VC real-time conversion as a headless Studio worker."""
 
 import argparse
+import ctypes
 import os
 import sys
+import time
 from types import SimpleNamespace
 
 
@@ -31,6 +33,13 @@ def main() -> int:
     try:
         from realtime_vc_engine import RealtimeVCEngine
 
+        if sys.platform == "win32":
+            above_normal_priority = 0x00008000
+            ctypes.windll.kernel32.SetPriorityClass(
+                ctypes.windll.kernel32.GetCurrentProcess(),
+                above_normal_priority,
+            )
+
         engine = RealtimeVCEngine(
             SimpleNamespace(
                 checkpoint_path=None,
@@ -39,6 +48,16 @@ def main() -> int:
                 fp16=True,
             )
         )
+        last_perf_report = 0.0
+
+        def report_performance(infer_time, _delay_time, _measured_delay):
+            nonlocal last_perf_report
+            now = time.monotonic()
+            if infer_time > 0 and now - last_perf_report >= 0.5:
+                last_perf_report = now
+                print(f"PERF infer_ms={infer_time * 1000:.1f}", flush=True)
+
+        engine.on_perf_update = report_performance
         engine.set_config(
             sg_hostapi="Windows WASAPI",
             sg_wasapi_exclusive=False,

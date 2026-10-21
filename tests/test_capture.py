@@ -1,9 +1,13 @@
+import queue
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
 from omnivoice.cli.capture import _prepare_audio, _resolve_speaker, _validate_audio
 from omnivoice.cli.capture_ui import (
     LIVE_VOICE_PRESETS,
+    OmniVoiceStudio,
     delete_selection,
     detected_hotkey,
     is_physical_microphone_name,
@@ -175,6 +179,7 @@ def test_virtual_and_physical_device_detection():
 def test_live_voice_presets_trade_latency_for_similarity():
     fast = LIVE_VOICE_PRESETS["Fast"]
     balanced = LIVE_VOICE_PRESETS["Balanced"]
+    stable = LIVE_VOICE_PRESETS["CS2 stable"]
     high = LIVE_VOICE_PRESETS["High fidelity"]
 
     assert (
@@ -186,6 +191,34 @@ def test_live_voice_presets_trade_latency_for_similarity():
         < high["max_prompt_length"]
     )
     assert fast["block_time"] < balanced["block_time"] < high["block_time"]
+    assert stable["diffusion_steps"] == balanced["diffusion_steps"]
+    assert stable["inference_cfg_rate"] == 0.0
+    assert stable["block_time"] < high["block_time"]
+
+
+def test_live_voice_watcher_detects_repeated_underruns():
+    class FakeProcess:
+        stdout = iter(
+            [
+                "READY delay_ms=920.0\n",
+                "output underrun: the pipeline is not keeping up\n",
+                "output underrun: the pipeline is not keeping up\n",
+                "output underrun: the pipeline is not keeping up\n",
+            ]
+        )
+
+        @staticmethod
+        def wait():
+            return 0
+
+    dummy = SimpleNamespace(events=queue.Queue())
+
+    OmniVoiceStudio._watch_live_voice(dummy, FakeProcess())
+
+    events = []
+    while not dummy.events.empty():
+        events.append(dummy.events.get_nowait())
+    assert ("live_voice_overloaded",) in events
 
 
 @pytest.mark.parametrize(
