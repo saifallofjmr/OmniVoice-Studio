@@ -186,6 +186,7 @@ def test_live_voice_presets_trade_latency_for_similarity():
     balanced = LIVE_VOICE_PRESETS["Balanced"]
     efficient = LIVE_VOICE_PRESETS["Efficient fidelity"]
     enhanced = LIVE_VOICE_PRESETS["Enhanced fidelity"]
+    legacy = LIVE_VOICE_PRESETS["v0.3.0 legacy"]
     stable = LIVE_VOICE_PRESETS["CS2 stable"]
     high = LIVE_VOICE_PRESETS["High fidelity"]
 
@@ -214,6 +215,11 @@ def test_live_voice_presets_trade_latency_for_similarity():
         < enhanced["max_prompt_length"]
         < high["max_prompt_length"]
     )
+    assert legacy["diffusion_steps"] == high["diffusion_steps"]
+    assert legacy["inference_cfg_rate"] == high["inference_cfg_rate"]
+    assert legacy["max_prompt_length"] == high["max_prompt_length"]
+    assert legacy["compile_estimator"] is False
+    assert legacy["reference_conditioning"] == "raw"
 
 
 def test_prepare_reference_audio_trims_silence_and_normalizes_level():

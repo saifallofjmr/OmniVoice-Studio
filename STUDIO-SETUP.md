@@ -51,6 +51,8 @@ microphone is never passed through unconverted.
 - **Balanced:** moderate latency and identity.
 - **Enhanced fidelity:** stronger identity and streaming continuity while
   retaining more gaming headroom than High fidelity.
+- **v0.3.0 legacy:** restores the original raw-reference/eager live path when
+  newer conditioning sounds artificial on a particular voice.
 - **High fidelity:** strongest zero-shot similarity, highest latency.
 
 Use 6-15 seconds of clean, dry, authorized speech for the best result.

@@ -91,6 +91,17 @@ LIVE_VOICE_PRESETS = {
         "block_time": 0.36,
         "extra_time_ce": 3.5,
         "extra_time": 0.8,
+        "reference_conditioning": "cleaned",
+    },
+    "v0.3.0 legacy": {
+        "diffusion_steps": 12,
+        "inference_cfg_rate": 0.7,
+        "max_prompt_length": 10.0,
+        "block_time": 0.4,
+        "extra_time_ce": 4.0,
+        "extra_time": 1.0,
+        "compile_estimator": False,
+        "reference_conditioning": "raw",
     },
     "CS2 stable": {
         "diffusion_steps": 8,
@@ -2093,6 +2104,13 @@ class OmniVoiceStudio:
                 str(preset["extra_time_ce"]),
                 "--extra-time",
                 str(preset["extra_time"]),
+                (
+                    "--compile-estimator"
+                    if preset.get("compile_estimator", True)
+                    else "--no-compile-estimator"
+                ),
+                "--reference-conditioning",
+                str(preset.get("reference_conditioning", "raw")),
             ]
             self.live_voice_process = subprocess.Popen(
                 command,

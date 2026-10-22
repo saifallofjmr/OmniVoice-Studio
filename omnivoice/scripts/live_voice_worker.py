@@ -82,6 +82,11 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument("--extra-time-ce", type=float, default=2.5)
     parser.add_argument("--extra-time", type=float, default=0.5)
     parser.add_argument(
+        "--reference-conditioning",
+        choices=("raw", "cleaned"),
+        default="raw",
+    )
+    parser.add_argument(
         "--compile-estimator",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -130,7 +135,7 @@ def install_overload_recovery(engine) -> None:
     engine._push_output = MethodType(push_delayed_output, engine)
 
 
-def precompute_reference_condition(engine) -> None:
+def precompute_reference_condition(engine, conditioning: str = "raw") -> None:
     import librosa
     import torch
     import torchaudio
@@ -141,11 +146,14 @@ def precompute_reference_condition(engine) -> None:
         engine.config.reference_audio_path,
         sr=sample_rate,
     )
-    reference = prepare_reference_audio(
-        reference,
-        sample_rate,
-        engine.config.max_prompt_length,
-    )
+    if conditioning == "cleaned":
+        reference = prepare_reference_audio(
+            reference,
+            sample_rate,
+            engine.config.max_prompt_length,
+        )
+    else:
+        reference = reference[: int(sample_rate * engine.config.max_prompt_length)]
     reference_tensor = torch.from_numpy(reference).to(engine.device)
     reference_16k = torchaudio.functional.resample(reference_tensor, sample_rate, 16000)
     semantic = semantic_fn(reference_16k.unsqueeze(0))
@@ -172,8 +180,8 @@ def precompute_reference_condition(engine) -> None:
         np.sqrt(np.mean(np.square(reference), dtype=np.float64))
     )
     print(
-        f"REFERENCE duration_s={len(reference) / sample_rate:.2f} "
-        f"rms={reference_rms:.3f}",
+        f"REFERENCE mode={conditioning} "
+        f"duration_s={len(reference) / sample_rate:.2f} rms={reference_rms:.3f}",
         flush=True,
     )
 
@@ -208,7 +216,11 @@ def select_stream_devices(input_name: str, output_name: str) -> None:
     sd.default.device = (input_index, output_index)
 
 
-def warmup_engine(engine, compile_estimator: bool) -> None:
+def warmup_engine(
+    engine,
+    compile_estimator: bool,
+    reference_conditioning: str,
+) -> None:
     import torch
 
     model = engine.model_set[0]
@@ -230,7 +242,7 @@ def warmup_engine(engine, compile_estimator: bool) -> None:
             print(f"COMPILE unavailable: {exc}", flush=True)
 
     engine._prepare_buffers()
-    precompute_reference_condition(engine)
+    precompute_reference_condition(engine, reference_conditioning)
     dummy_input = torch.zeros_like(engine.input_wav_res)
     try:
         engine._custom_infer(dummy_input)
@@ -308,7 +320,11 @@ def main() -> int:
             extra_time_right=0.02,
         )
         select_stream_devices(args.input_device, args.output_device)
-        warmup_engine(engine, args.compile_estimator)
+        warmup_engine(
+            engine,
+            args.compile_estimator,
+            args.reference_conditioning,
+        )
         engine.start_stream()
         print(f"READY delay_ms={engine.delay_time * 1000:.1f}", flush=True)
         sys.stdin.readline()
