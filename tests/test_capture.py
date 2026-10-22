@@ -9,6 +9,7 @@ from omnivoice.cli.capture import _prepare_audio, _resolve_speaker, _validate_au
 from omnivoice.cli.capture_ui import (
     LIVE_VOICE_PRESETS,
     OmniVoiceStudio,
+    build_live_voice_command,
     delete_selection,
     detected_hotkey,
     is_physical_microphone_name,
@@ -17,7 +18,9 @@ from omnivoice.cli.capture_ui import (
     keep_selection,
     mix_audio_block,
     parse_hotkey,
+    parse_live_pitch,
     transcribe_audio,
+    voicemeeter_routing_parameters,
 )
 from omnivoice.scripts.live_voice_worker import (
     install_overload_recovery,
@@ -187,6 +190,7 @@ def test_live_voice_presets_trade_latency_for_similarity():
     efficient = LIVE_VOICE_PRESETS["Efficient fidelity"]
     enhanced = LIVE_VOICE_PRESETS["Enhanced fidelity"]
     legacy = LIVE_VOICE_PRESETS["v0.3.0 legacy"]
+    f0 = LIVE_VOICE_PRESETS["F0 gender fidelity"]
     stable = LIVE_VOICE_PRESETS["CS2 stable"]
     high = LIVE_VOICE_PRESETS["High fidelity"]
 
@@ -220,6 +224,33 @@ def test_live_voice_presets_trade_latency_for_similarity():
     assert legacy["max_prompt_length"] == high["max_prompt_length"]
     assert legacy["compile_estimator"] is False
     assert legacy["reference_conditioning"] == "raw"
+    assert f0["model"] == "f0"
+    assert efficient["diffusion_steps"] < f0["diffusion_steps"] < high["diffusion_steps"]
+
+
+def test_live_pitch_and_f0_command_are_bounded_and_explicit():
+    assert parse_live_pitch("9.4") == 6.0
+    assert parse_live_pitch("-7") == -6.0
+    assert parse_live_pitch("not-a-number") == 0.0
+
+    command = build_live_voice_command(
+        LIVE_VOICE_PRESETS["F0 gender fidelity"],
+        reference="angel.wav",
+        microphone="HyperX",
+        output="Voicemeeter Input",
+        pitch_shift=1.5,
+    )
+
+    assert command[command.index("--model") + 1] == "f0"
+    assert command[command.index("--prompt-pitch-shift") + 1] == "1.50"
+
+
+def test_voicemeeter_b1_route_excludes_raw_hardware_inputs():
+    standard = voicemeeter_routing_parameters(1)
+
+    assert standard[b"Strip[0].B1"] == 0.0
+    assert standard[b"Strip[1].B1"] == 0.0
+    assert standard[b"Strip[2].B1"] == 1.0
 
 
 def test_prepare_reference_audio_trims_silence_and_normalizes_level():

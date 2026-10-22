@@ -16,6 +16,7 @@ import argparse
 import ctypes
 import gc
 import json
+import math
 import os
 import queue
 import subprocess
@@ -37,6 +38,7 @@ from omnivoice.cli.capture import (
     _prepare_audio,
     _validate_audio,
 )
+from omnivoice.scripts.live_pitch import MAX_MANUAL_PITCH_SEMITONES
 
 REFERENCE_SAMPLE_RATE = 24000
 CAPTURE_SAMPLE_RATE = 48000
@@ -126,6 +128,34 @@ LIVE_VOICE_PRESETS = {
         "block_time": 0.4,
         "extra_time_ce": 4.0,
         "extra_time": 1.0,
+    },
+    "Whisper fidelity": {
+        "model": "whisper",
+        "diffusion_steps": 12,
+        "inference_cfg_rate": 0.7,
+        "max_prompt_length": 10.0,
+        "block_time": 0.5,
+        "extra_time_ce": 4.0,
+        "extra_time": 1.0,
+    },
+    "Whisper efficient": {
+        "model": "whisper",
+        "diffusion_steps": 8,
+        "inference_cfg_rate": 0.7,
+        "max_prompt_length": 6.0,
+        "block_time": 0.4,
+        "extra_time_ce": 3.0,
+        "extra_time": 0.5,
+    },
+    "F0 gender fidelity": {
+        "model": "f0",
+        "diffusion_steps": 10,
+        "inference_cfg_rate": 0.7,
+        "max_prompt_length": 10.0,
+        "block_time": 0.5,
+        "extra_time_ce": 4.0,
+        "extra_time": 1.0,
+        "compile_estimator": False,
     },
 }
 
@@ -354,6 +384,120 @@ def mix_audio_block(
     return mixed.astype(np.float32, copy=False)
 
 
+def build_live_voice_command(
+    preset: dict,
+    *,
+    reference: Path | str,
+    microphone: str,
+    output: str,
+    pitch_shift: float = 0.0,
+) -> list[str]:
+    return [
+        str(SEED_VC_PYTHON),
+        str(LIVE_VOICE_WORKER),
+        "--seed-vc-dir",
+        str(SEED_VC_DIRECTORY),
+        "--reference",
+        str(reference),
+        "--input-device",
+        microphone,
+        "--output-device",
+        output,
+        "--diffusion-steps",
+        str(preset["diffusion_steps"]),
+        "--inference-cfg-rate",
+        str(preset["inference_cfg_rate"]),
+        "--max-prompt-length",
+        str(preset["max_prompt_length"]),
+        "--block-time",
+        str(preset["block_time"]),
+        "--extra-time-ce",
+        str(preset["extra_time_ce"]),
+        "--extra-time",
+        str(preset["extra_time"]),
+        (
+            "--compile-estimator"
+            if preset.get("compile_estimator", True)
+            else "--no-compile-estimator"
+        ),
+        "--reference-conditioning",
+        str(preset.get("reference_conditioning", "raw")),
+        "--model",
+        str(preset.get("model", "tiny")),
+        "--prompt-pitch-shift",
+        f"{pitch_shift:.2f}",
+    ]
+
+
+def format_register_status(detail: str) -> str | None:
+    """Turn a worker REGISTER line into a short, readable status sentence."""
+    fields = dict(part.split("=", 1) for part in detail.split() if "=" in part)
+    guard = fields.get("guard")
+    if guard == "unavailable":
+        return (
+            "Register guard off: the reference pitch could not be measured "
+            "reliably."
+        )
+    if guard == "octave_error":
+        return (
+            "Register guard: output came out an octave high; retrying with the "
+            f"reference shifted {fields.get('shift', '?')} st."
+        )
+    if guard == "applied":
+        return (
+            f"Register guard fixed the octave error (reference shifted "
+            f"{fields.get('shift', '?')} st, target {fields.get('target', '?')} Hz)."
+        )
+    if guard == "failed":
+        return (
+            "Register guard could not fix the pitch; try a Whisper preset or "
+            "another reference clip."
+        )
+    if "output" in fields and "target" in fields:
+
+        def hertz(key: str) -> str:
+            value = fields.get(key, "nan")
+            return "?" if value.lower() == "nan" else f"{value} Hz"
+
+        return (
+            f"Register: you {hertz('source')} -> clone {hertz('output')} "
+            f"(target {hertz('target')})."
+        )
+    return None
+
+
+def parse_live_pitch(value: object) -> float:
+    try:
+        pitch = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(pitch):
+        return 0.0
+    limit = MAX_MANUAL_PITCH_SEMITONES
+    return round(max(-limit, min(limit, pitch)) * 2.0) / 2.0
+
+
+def voicemeeter_routing_parameters(voicemeeter_type: int) -> dict[bytes, float]:
+    """Parameters that make B1 carry only the virtual (Studio) strip.
+
+    Hardware input strips must never feed B1, otherwise a raw microphone would be
+    mixed with the delayed converted voice.
+    """
+    hardware_strips, virtual_strip, b1_bus = {
+        2: ((0, 1, 2), 3, 3),  # Banana
+        3: ((0, 1, 2, 3, 4), 5, 5),  # Potato
+    }.get(voicemeeter_type, ((0, 1), 2, 1))  # Standard
+    parameters = {
+        f"Strip[{virtual_strip}].B1".encode(): 1.0,
+        f"Strip[{virtual_strip}].A1".encode(): 0.0,
+        f"Strip[{virtual_strip}].Mute".encode(): 0.0,
+        f"Bus[{b1_bus}].Mute".encode(): 0.0,
+    }
+    for strip in hardware_strips:
+        parameters[f"Strip[{strip}].B1".encode()] = 0.0
+    return parameters
+
+
 def configure_voicemeeter_b1() -> None:
     if sys.platform != "win32":
         raise RuntimeError("VoiceMeeter routing currently requires Windows.")
@@ -369,6 +513,14 @@ def configure_voicemeeter_b1() -> None:
     remote.VBVMR_RunVoicemeeter.restype = ctypes.c_long
     remote.VBVMR_SetParameterFloat.argtypes = [ctypes.c_char_p, ctypes.c_float]
     remote.VBVMR_SetParameterFloat.restype = ctypes.c_long
+    remote.VBVMR_GetParameterFloat.argtypes = [
+        ctypes.c_char_p,
+        ctypes.POINTER(ctypes.c_float),
+    ]
+    remote.VBVMR_GetParameterFloat.restype = ctypes.c_long
+    remote.VBVMR_GetVoicemeeterType.argtypes = [ctypes.POINTER(ctypes.c_long)]
+    remote.VBVMR_GetVoicemeeterType.restype = ctypes.c_long
+    remote.VBVMR_IsParametersDirty.restype = ctypes.c_long
 
     login_result = remote.VBVMR_Login()
     if login_result == 1:
@@ -382,17 +534,33 @@ def configure_voicemeeter_b1() -> None:
         )
 
     try:
-        parameters = {
-            b"Strip[2].B1": 1.0,
-            b"Strip[2].A1": 0.0,
-            b"Strip[2].Mute": 0.0,
-            b"Bus[1].Mute": 0.0,
-        }
+        for _ in range(20):
+            dirty = remote.VBVMR_IsParametersDirty()
+            if dirty == 0:
+                break
+            time.sleep(0.05)
+        else:
+            raise RuntimeError("VoiceMeeter did not finish loading its parameters.")
+
+        voicemeeter_type = ctypes.c_long(1)
+        if remote.VBVMR_GetVoicemeeterType(ctypes.byref(voicemeeter_type)) != 0:
+            voicemeeter_type = ctypes.c_long(1)
+        parameters = voicemeeter_routing_parameters(voicemeeter_type.value)
         for name, value in parameters.items():
             result = remote.VBVMR_SetParameterFloat(name, ctypes.c_float(value))
             if result != 0:
                 raise RuntimeError(
                     f"VoiceMeeter rejected {name.decode()} (API error {result})."
+                )
+        for _ in range(20):
+            remote.VBVMR_IsParametersDirty()
+            time.sleep(0.05)
+        for name, expected in parameters.items():
+            actual = ctypes.c_float()
+            result = remote.VBVMR_GetParameterFloat(name, ctypes.byref(actual))
+            if result != 0 or abs(actual.value - expected) > 0.01:
+                raise RuntimeError(
+                    f"VoiceMeeter did not apply {name.decode()}={expected:g}."
                 )
     finally:
         remote.VBVMR_Logout()
@@ -1000,6 +1168,8 @@ class OmniVoiceStudio:
         self.live_voice_process: subprocess.Popen | None = None
         self.live_voice_active_preset = ""
         self.live_voice_infer_ms = 0.0
+        self.live_voice_status_base = ""
+        self.live_voice_register_text = ""
         (
             self.initial_record_hotkey,
             self.initial_stop_hotkey,
@@ -1007,6 +1177,7 @@ class OmniVoiceStudio:
             self.initial_live_quality,
             self.hotkey_config_warning,
         ) = self._load_hotkey_settings()
+        self.initial_live_pitch = self._load_live_pitch_setting()
         self.hotkey_specs: dict[str, HotkeySpec] = {}
 
         self._configure_window()
@@ -1386,6 +1557,30 @@ class OmniVoiceStudio:
         self.live_voice_quality_combo.bind(
             "<<ComboboxSelected>>", self._live_quality_selected
         )
+        ttk.Label(live_panel, text="Pitch").grid(
+            row=2, column=0, sticky="w", pady=(8, 0)
+        )
+        pitch_row = ttk.Frame(live_panel)
+        pitch_row.grid(row=2, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(8, 0))
+        self.live_pitch_var = tk.StringVar(value=f"{self.initial_live_pitch:+.1f}")
+        self.live_pitch_spinbox = ttk.Spinbox(
+            pitch_row,
+            from_=-MAX_MANUAL_PITCH_SEMITONES,
+            to=MAX_MANUAL_PITCH_SEMITONES,
+            increment=0.5,
+            width=6,
+            format="%+.1f",
+            textvariable=self.live_pitch_var,
+            command=self._live_pitch_changed,
+        )
+        self.live_pitch_spinbox.grid(row=0, column=0, sticky="w")
+        self.live_pitch_spinbox.bind("<Return>", self._live_pitch_changed)
+        self.live_pitch_spinbox.bind("<FocusOut>", self._live_pitch_changed)
+        ttk.Label(
+            pitch_row,
+            text="semitones (0 = reference as recorded)",
+            style="Route.TLabel",
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
         self.start_live_voice_button = ttk.Button(
             live_panel,
             text="Start live clone",
@@ -1393,12 +1588,12 @@ class OmniVoiceStudio:
             command=self._start_live_voice,
         )
         self.start_live_voice_button.grid(
-            row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0)
+            row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0)
         )
         self.stop_live_voice_button = ttk.Button(
             live_panel, text="Stop live clone", command=self._stop_live_voice
         )
-        self.stop_live_voice_button.grid(row=2, column=2, padx=(6, 0), pady=(12, 0))
+        self.stop_live_voice_button.grid(row=3, column=2, padx=(6, 0), pady=(12, 0))
         self.live_voice_status_var = tk.StringVar(
             value="Choose quality, then start live conversion."
         )
@@ -1407,7 +1602,7 @@ class OmniVoiceStudio:
             textvariable=self.live_voice_status_var,
             style="Subtitle.TLabel",
             wraplength=380,
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
         mixer_panel = ttk.Labelframe(
             live_column,
@@ -1590,6 +1785,29 @@ class OmniVoiceStudio:
                 f"Hotkey settings were invalid; defaults restored: {exc}",
             )
 
+    def _load_live_pitch_setting(self) -> float:
+        try:
+            settings = json.loads(HOTKEY_CONFIG_PATH.read_text(encoding="utf-8"))
+            return parse_live_pitch(settings.get("live_pitch_shift", 0.0))
+        except (json.JSONDecodeError, OSError, AttributeError):
+            return 0.0
+
+    def _live_pitch_value(self) -> float:
+        return parse_live_pitch(self.live_pitch_var.get())
+
+    def _live_pitch_changed(self, _event=None) -> None:
+        pitch = self._live_pitch_value()
+        self.live_pitch_var.set(f"{pitch:+.1f}")
+        try:
+            self._save_hotkey_settings()
+            self._set_status(
+                f"Live pitch set to {pitch:+.1f} st; it applies the next time "
+                "live clone starts.",
+                "success",
+            )
+        except OSError as exc:
+            self._set_status(f"Could not save live pitch: {exc}", "error")
+
     def _save_hotkey_settings(self) -> None:
         HOTKEY_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         HOTKEY_CONFIG_PATH.write_text(
@@ -1599,6 +1817,7 @@ class OmniVoiceStudio:
                     "stop_hotkey": self.stop_hotkey_var.get(),
                     "play_hotkey": self.play_hotkey_var.get(),
                     "live_quality": self.live_voice_quality_var.get(),
+                    "live_pitch_shift": self._live_pitch_value(),
                 },
                 indent=2,
             )
@@ -2081,37 +2300,13 @@ class OmniVoiceStudio:
             preset = LIVE_VOICE_PRESETS[preset_name]
             self.live_voice_active_preset = preset_name
 
-            command = [
-                str(SEED_VC_PYTHON),
-                str(LIVE_VOICE_WORKER),
-                "--seed-vc-dir",
-                str(SEED_VC_DIRECTORY),
-                "--reference",
-                str(reference_path),
-                "--input-device",
-                microphone.name,
-                "--output-device",
-                virtual_output.name,
-                "--diffusion-steps",
-                str(preset["diffusion_steps"]),
-                "--inference-cfg-rate",
-                str(preset["inference_cfg_rate"]),
-                "--max-prompt-length",
-                str(preset["max_prompt_length"]),
-                "--block-time",
-                str(preset["block_time"]),
-                "--extra-time-ce",
-                str(preset["extra_time_ce"]),
-                "--extra-time",
-                str(preset["extra_time"]),
-                (
-                    "--compile-estimator"
-                    if preset.get("compile_estimator", True)
-                    else "--no-compile-estimator"
-                ),
-                "--reference-conditioning",
-                str(preset.get("reference_conditioning", "raw")),
-            ]
+            command = build_live_voice_command(
+                preset,
+                reference=reference_path,
+                microphone=microphone.name,
+                output=virtual_output.name,
+                pitch_shift=self._live_pitch_value(),
+            )
             self.live_voice_process = subprocess.Popen(
                 command,
                 cwd=SEED_VC_DIRECTORY,
@@ -2165,6 +2360,8 @@ class OmniVoiceStudio:
                         self.events.put(("live_voice_error", stripped[6:]))
                     elif stripped.startswith("PERF infer_ms="):
                         self.events.put(("live_voice_perf", stripped.partition("=")[2]))
+                    elif stripped.startswith("REGISTER "):
+                        self.events.put(("live_voice_register", stripped[9:]))
                     elif "output underrun" in stripped:
                         now = time.monotonic()
                         underrun_times = [
@@ -2762,11 +2959,19 @@ class OmniVoiceStudio:
                 elif kind == "live_voice_ready":
                     _, detail = event
                     delay = detail.partition("delay_ms=")[2]
-                    self.live_voice_status_var.set(
+                    self.live_voice_status_base = (
                         f"Live clone active ({self.live_voice_active_preset}) "
                         f"-> Voicemeeter Out 6 (delay {delay} ms)."
                     )
+                    self.live_voice_register_text = ""
+                    self._refresh_live_voice_status()
                     self._set_status("Live AI voice conversion is active.", "success")
+                elif kind == "live_voice_register":
+                    _, detail = event
+                    register_text = format_register_status(detail)
+                    if register_text:
+                        self.live_voice_register_text = register_text
+                        self._refresh_live_voice_status()
                 elif kind == "live_voice_error":
                     _, detail = event
                     self.live_voice_status_var.set(f"Live clone error: {detail}")
@@ -2822,6 +3027,12 @@ class OmniVoiceStudio:
             "success": "Success.Status.TLabel",
         }.get(state, "Status.TLabel")
         self.status_label.configure(style=style)
+
+    def _refresh_live_voice_status(self) -> None:
+        text = self.live_voice_status_base
+        if self.live_voice_register_text:
+            text = f"{text}\n{self.live_voice_register_text}"
+        self.live_voice_status_var.set(text)
 
     def _update_controls(self) -> None:
         has_audio = self.audio is not None and bool(len(self.audio))
@@ -2936,6 +3147,9 @@ class OmniVoiceStudio:
         )
         self.live_voice_quality_combo.configure(
             state="disabled" if live_voice_running else "readonly"
+        )
+        self.live_pitch_spinbox.configure(
+            state="disabled" if live_voice_running else "normal"
         )
 
     def _close(self) -> None:

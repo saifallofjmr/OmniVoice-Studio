@@ -124,7 +124,9 @@ Get-Content (Join-Path $seedVcDirectory "requirements.txt") |
     Where-Object { $_ -notmatch "^torch(vision|audio)?==" } |
     Set-Content -LiteralPath $filteredRequirements -Encoding utf8
 Invoke-Checked $seedPython -m pip install -r $filteredRequirements
-Invoke-Checked $seedPython -m pip install "triton-windows==3.4.0.post20"
+Invoke-Checked $seedPython -m pip install `
+    "triton-windows==3.4.0.post20" `
+    "praat-parselmouth==0.4.7"
 Invoke-Checked $seedPython -m pip check
 
 New-Item `

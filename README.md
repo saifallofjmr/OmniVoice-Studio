@@ -353,10 +353,11 @@ Install the standard VoiceMeeter virtual audio driver, select the physical
 microphone and `Voicemeeter Input` in Studio, then click **Start mixer**. In
 CS2, select **Voicemeeter Out 6 (VB-Audio Voicemeeter VAIO)** as the
 microphone input. This numbered endpoint is the B1 bus exposed by the current
-VoiceMeeter driver. Studio configures the B1 route automatically, disables
-hardware monitoring to avoid feedback, and provides separate microphone/AI
-gain controls, meters, a limiter, a **Send latest clone** button, and a global
-play hotkey.
+VoiceMeeter driver. Studio configures B1 to carry only its virtual converted
+feed and explicitly disables B1 on hardware-input strips, preventing the raw
+microphone from mixing with delayed converted audio. It also disables hardware
+monitoring to avoid feedback and provides separate microphone/AI gain controls,
+meters, a limiter, a **Send latest clone** button, and a global play hotkey.
 
 On Windows, VoiceMeeter can be installed with:
 
@@ -389,12 +390,22 @@ Choose a live quality preset before starting:
 | Efficient fidelity | Up to 3 s | CFG 0.7 / 8 steps | Strong guidance with reduced sequence/step cost |
 | Enhanced fidelity | Up to 6 s | CFG 0.7 / 10 steps | Stronger live identity and smoother context without the full High-fidelity cost |
 | v0.3.0 legacy | Up to 10 s | CFG 0.7 / 12 eager steps | Restores the original v0.3.0 reference and streaming behavior for compatibility |
+| Whisper efficient | Up to 6 s | Whisper / CFG 0.7 / 8 steps | Larger content model with moderate compute |
+| Whisper fidelity | Up to 10 s | Whisper / CFG 0.7 / 12 steps | Higher-bandwidth identity without explicit pitch control |
+| F0 gender fidelity | Up to 10 s | F0-conditioned 44.1 kHz / CFG 0.7 / 10 steps | Automatically maps the live source register to the target while preserving pitch contour |
 | CS2 stable | Up to 6 s | CFG 0.0 / 8 steps | Default; resists foreground-game GPU contention |
 | CS2 survival | Up to 3 s | CFG 0.0 / 2 steps | Maximum continuity under severe load |
 | High fidelity | Up to 10 s | CFG 0.7 / 12 steps | Closest zero-shot match, highest delay |
 
-For the closest result, use **High fidelity** with 6-15 seconds of one clean,
-dry speaker at a healthy level. Remove music, game audio, reverberation,
+Use **F0 gender fidelity** for cross-register conversion such as a low male
+source into a high female target. It extracts source pitch with RMVPE and shifts
+the complete pitch contour toward the reference speaker's median register. The
+Pitch control is an optional target-register trim; leave it at `0.0` for
+automatic matching.
+
+For the closest same-register result, use **High fidelity**; for cross-register
+conversion, use **F0 gender fidelity**. In either case, provide 6-15 seconds of
+one clean, dry speaker at a healthy level. Remove music, game audio, reverberation,
 overlapping voices, long silences, and clipped peaks. Similar source and target
 pitch/register also improves perceived identity. **Enhanced fidelity** trims
 silent reference edges and safely normalizes its conditioning level.

@@ -53,11 +53,18 @@ microphone is never passed through unconverted.
   retaining more gaming headroom than High fidelity.
 - **v0.3.0 legacy:** restores the original raw-reference/eager live path when
   newer conditioning sounds artificial on a particular voice.
+- **F0 gender fidelity:** recommended when source and target registers differ
+  substantially, such as male-to-female conversion. RMVPE maps the live pitch
+  contour to the target reference register automatically.
+- **Whisper fidelity / efficient:** larger content-model alternatives without
+  explicit target-register mapping.
 - **High fidelity:** strongest zero-shot similarity, highest latency.
 
 Use 6-15 seconds of clean, dry, authorized speech for the best result.
 Studio automatically removes silent reference edges and normalizes the
 conditioning level used by the live engine.
+Leave the Pitch control at `0.0` for automatic F0 matching; use it only as a
+small target-register adjustment.
 
 ## Responsible use
 
